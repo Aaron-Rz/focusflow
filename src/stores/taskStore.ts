@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { db } from '@/lib/db/dexie';
 import type { Task, Importance, CogLoad } from '@/types';
+import { detectCycle } from '@/lib/algorithm/dependencies';
 import { v4 as uuidv4 } from 'uuid';
 
 interface TaskStore {
@@ -20,6 +21,9 @@ interface TaskStore {
   markDone: (id: string) => Promise<void>;
   markOpen: (id: string) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
+  // Set/clear a Must-Do predecessor. Rejects (returns an error message) if it would
+  // create a cycle; returns null on success.
+  setDependency: (taskId: string, dependsOnId: string | undefined) => Promise<string | null>;
 }
 
 export const useTaskStore = create<TaskStore>((set, get) => ({
@@ -63,5 +67,19 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   deleteTask: async (id) => {
     await db.tasks.delete(id);
     await get().loadTasks();
+  },
+
+  setDependency: async (taskId, dependsOnId) => {
+    if (dependsOnId === taskId) return 'A task cannot depend on itself.';
+    // Simulate the change against current tasks and reject if it forms a cycle.
+    const candidate = get().tasks.map((t) =>
+      t.id === taskId ? { ...t, dependsOnId } : t
+    );
+    if (detectCycle(candidate)) {
+      return 'That dependency would create a cycle.';
+    }
+    await db.tasks.update(taskId, { dependsOnId: dependsOnId ?? undefined });
+    await get().loadTasks();
+    return null;
   },
 }));

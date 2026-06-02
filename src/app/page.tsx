@@ -9,7 +9,8 @@ const IMPORTANCE_LABELS: Record<number, string> = { 1: '1-Low', 2: '2-Medium', 3
 const COGLOAD_LABELS: Record<number, string> = { 1: '1-Light', 2: '2-Moderate', 3: '3-Heavy' };
 
 export default function Home() {
-  const { tasks, loading, loadTasks, addTask, markDone, markOpen } = useTaskStore();
+  const { tasks, loading, loadTasks, addTask, markDone, markOpen, setDependency } = useTaskStore();
+  const [depError, setDepError] = useState('');
 
   const [title, setTitle] = useState('');
   const [effortMin, setEffortMin] = useState(30);
@@ -47,17 +48,30 @@ export default function Home() {
   // Build a lookup map for dependency status
   const taskById = new Map<string, Task>(tasks.map(t => [t.id, t]));
 
-  // Filter to ready tasks (no dep, or dep is done) and open status only
-  const readyTasks = tasks.filter(t => {
-    if (t.status === 'done') return false;
+  // An open task is "ready" iff it has no predecessor, or the predecessor is done.
+  // A dangling predecessor (missing/deleted) is treated as ready.
+  const isTaskReady = (t: Task) => {
     if (!t.dependsOnId) return true;
     const dep = taskById.get(t.dependsOnId);
-    return dep?.status === 'done';
-  });
+    return !dep || dep.status === 'done';
+  };
 
+  const openTasks = tasks.filter(t => t.status !== 'done');
+  const readyTasks = openTasks.filter(isTaskReady);
+  const blockedTasks = openTasks.filter(t => !isTaskReady(t));
   const doneTasks = tasks.filter(t => t.status === 'done');
 
   const ranked = rankTasks(readyTasks, now);
+
+  const handleSetDependency = async (taskId: string, value: string) => {
+    setDepError('');
+    const err = await setDependency(taskId, value || undefined);
+    if (err) setDepError(err);
+  };
+
+  // Options for the dependency dropdown of a given task: any other task except itself.
+  const depOptionsFor = (taskId: string) =>
+    tasks.filter(t => t.id !== taskId);
 
   return (
     <div className="max-w-2xl mx-auto p-4 font-mono">
@@ -145,6 +159,12 @@ export default function Home() {
         </button>
       </form>
 
+      {depError && (
+        <div className="mb-4 border border-red-300 bg-red-50 text-red-700 text-sm rounded px-3 py-2">
+          {depError}
+        </div>
+      )}
+
       {/* Ranked Task List */}
       <section>
         <h2 className="font-semibold text-lg mb-3">
@@ -186,11 +206,67 @@ export default function Home() {
                     <span>due: {new Date(task.deadline).toLocaleString()}</span>
                   )}
                 </div>
+                <div className="text-xs text-gray-500 mt-2 flex items-center gap-1">
+                  <label>depends on:</label>
+                  <select
+                    className="border border-gray-300 rounded px-1 py-0.5"
+                    value={task.dependsOnId ?? ''}
+                    onChange={e => handleSetDependency(task.id, e.target.value)}
+                  >
+                    <option value="">— none —</option>
+                    {depOptionsFor(task.id).map(o => (
+                      <option key={o.id} value={o.id}>{o.title}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </li>
           ))}
         </ul>
       </section>
+
+      {/* Blocked Tasks (predecessor not yet done) */}
+      {blockedTasks.length > 0 && (
+        <section className="mt-8">
+          <h2 className="font-semibold text-lg mb-3 text-gray-400">
+            Blocked ({blockedTasks.length})
+          </h2>
+          <ul className="space-y-2">
+            {blockedTasks.map(task => {
+              const dep = taskById.get(task.dependsOnId!);
+              return (
+                <li
+                  key={task.id}
+                  className="border border-gray-200 rounded p-3 opacity-50"
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium">{task.title}</span>
+                    <span className="text-xs bg-gray-200 text-gray-600 px-1 rounded">
+                      BLOCKED
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    waiting on: {dep ? dep.title : 'unknown task'}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-2 flex items-center gap-1">
+                    <label>depends on:</label>
+                    <select
+                      className="border border-gray-300 rounded px-1 py-0.5"
+                      value={task.dependsOnId ?? ''}
+                      onChange={e => handleSetDependency(task.id, e.target.value)}
+                    >
+                      <option value="">— none —</option>
+                      {depOptionsFor(task.id).map(o => (
+                        <option key={o.id} value={o.id}>{o.title}</option>
+                      ))}
+                    </select>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       {/* Done Tasks */}
       {doneTasks.length > 0 && (
