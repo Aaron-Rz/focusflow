@@ -4,10 +4,18 @@ import type { Task, Importance, CogLoad } from '@/types';
 import { detectCycle } from '@/lib/algorithm/dependencies';
 import { v4 as uuidv4 } from 'uuid';
 
+/** Returns the nesting depth of a task: 0 = top-level, 1 = child, 2 = grandchild. */
+export function getTaskDepth(taskId: string, tasks: Task[]): number {
+  const task = tasks.find((t) => t.id === taskId);
+  if (!task || !task.parentId) return 0;
+  return 1 + getTaskDepth(task.parentId, tasks);
+}
+
 interface TaskStore {
   tasks: Task[];
   loading: boolean;
   loadTasks: () => Promise<void>;
+  /** Returns an error string on failure, null on success. */
   addTask: (input: {
     title: string;
     effortMin: number;
@@ -17,7 +25,7 @@ interface TaskStore {
     category?: string;
     dependsOnId?: string;
     parentId?: string;
-  }) => Promise<void>;
+  }) => Promise<string | null>;
   markDone: (id: string) => Promise<void>;
   markOpen: (id: string) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
@@ -37,6 +45,30 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   },
 
   addTask: async (input) => {
+    const current = get().tasks;
+    if (input.parentId) {
+      const parentDepth = getTaskDepth(input.parentId, current);
+      if (parentDepth >= 2) {
+        return 'Cannot add a subtask here — maximum depth is 2 (grandchild level).';
+      }
+    }
+    // Cycle check for sibling Must-Do dependency
+    if (input.dependsOnId) {
+      const mockTask: Task = {
+        id: '__new__',
+        title: '',
+        effortMin: input.effortMin,
+        importance: input.importance,
+        cogLoad: input.cogLoad,
+        dependsOnId: input.dependsOnId,
+        parentId: input.parentId,
+        status: 'open',
+        createdAt: new Date().toISOString(),
+      };
+      if (detectCycle([...current, mockTask])) {
+        return 'That dependency would create a cycle.';
+      }
+    }
     const task: Task = {
       id: uuidv4(),
       title: input.title,
@@ -52,6 +84,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     };
     await db.tasks.add(task);
     await get().loadTasks();
+    return null;
   },
 
   markDone: async (id) => {
