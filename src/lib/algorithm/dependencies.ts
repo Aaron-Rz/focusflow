@@ -11,7 +11,22 @@ export interface DepTask {
   effortMin: number;
   deadline?: string;
   dependsOnId?: string;
+  parentId?: string;
   status: 'open' | 'done';
+}
+
+/**
+ * Effective effort for a task used by the scoring pipeline.
+ * If the task has at least one non-done direct child, returns the sum of those
+ * children's effortMin (the parent is done when all children are done, so its
+ * effort is the sum of remaining work). Otherwise returns the task's own effortMin.
+ */
+export function effectiveEffortMin(task: DepTask, allTasks: DepTask[]): number {
+  const activeChildren = allTasks.filter(
+    (t) => t.parentId === task.id && t.status !== 'done'
+  );
+  if (activeChildren.length === 0) return task.effortMin;
+  return activeChildren.reduce((sum, c) => sum + c.effortMin, 0);
 }
 
 /** A task is ready iff it has no predecessor, or its predecessor is done. */

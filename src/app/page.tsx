@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useTaskStore, getTaskDepth } from '@/stores/taskStore';
 import { rankTasks } from '@/lib/algorithm/score';
+import { effectiveEffortMin } from '@/lib/algorithm/dependencies';
 import type { Importance, CogLoad, Task } from '@/types';
 
 const IMP_LABELS: Record<number, string> = { 1: '1-Low', 2: '2-Med', 3: '3-High', 4: '4-Crit' };
@@ -336,9 +337,10 @@ export default function Home() {
 
   const now = new Date();
 
-  // Score all open tasks
+  // Score all open tasks — substitute effective effort before ranking
   const openTasks = tasks.filter((t) => t.status !== 'done');
-  const ranked = rankTasks(openTasks, now);
+  const scorable = openTasks.map((t) => ({ ...t, effortMin: effectiveEffortMin(t, tasks) }));
+  const ranked = rankTasks(scorable, now);
   const scoredById = new Map(
     ranked.map(({ task, score, isAtRisk, isOverdue }) => [task.id, { score, isAtRisk, isOverdue }])
   );

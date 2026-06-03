@@ -2,7 +2,7 @@
 // Run: npx vitest run dependencies.test.ts
 
 import { describe, it, expect } from 'vitest';
-import { isReady, detectCycle, effectiveDeadline, type DepTask } from './dependencies';
+import { isReady, detectCycle, effectiveDeadline, effectiveEffortMin, type DepTask } from './dependencies';
 import { bufferFactor } from './score';
 
 const NOW = new Date('2026-06-02T08:00:00.000Z');
@@ -101,5 +101,39 @@ describe('effectiveDeadline', () => {
     const a = tasks[0];
     // derived = NOW+10h − 1.06h ≈ NOW+8.94h; own = NOW+1h → own wins.
     expect(effectiveDeadline(a, tasks, NOW)?.toISOString()).toBe(inHours(1));
+  });
+});
+
+describe('effectiveEffortMin', () => {
+  it('no children → returns own effortMin', () => {
+    const tasks = [mk({ id: 'a', effortMin: 30 })];
+    expect(effectiveEffortMin(tasks[0], tasks)).toBe(30);
+  });
+
+  it('two non-done children (60, 45) → 105', () => {
+    const tasks = [
+      mk({ id: 'parent', effortMin: 30 }),
+      mk({ id: 'c1', effortMin: 60, parentId: 'parent' }),
+      mk({ id: 'c2', effortMin: 45, parentId: 'parent' }),
+    ];
+    expect(effectiveEffortMin(tasks[0], tasks)).toBe(105);
+  });
+
+  it('one done child (60), one non-done (45) → 45', () => {
+    const tasks = [
+      mk({ id: 'parent', effortMin: 30 }),
+      mk({ id: 'c1', effortMin: 60, parentId: 'parent', status: 'done' }),
+      mk({ id: 'c2', effortMin: 45, parentId: 'parent' }),
+    ];
+    expect(effectiveEffortMin(tasks[0], tasks)).toBe(45);
+  });
+
+  it('all children done → returns own effortMin', () => {
+    const tasks = [
+      mk({ id: 'parent', effortMin: 30 }),
+      mk({ id: 'c1', effortMin: 60, parentId: 'parent', status: 'done' }),
+      mk({ id: 'c2', effortMin: 45, parentId: 'parent', status: 'done' }),
+    ];
+    expect(effectiveEffortMin(tasks[0], tasks)).toBe(30);
   });
 });
