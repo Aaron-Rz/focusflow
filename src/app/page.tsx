@@ -9,6 +9,7 @@ import { getDistinctCategories } from '@/lib/utils/categories';
 import type { Importance, CogLoad, Task } from '@/types';
 import { TaskTimer } from '@/components/TaskTimer';
 import { PomodoroTimer } from '@/components/PomodoroTimer';
+import { ThemeToggleButton } from '@/components/ThemeToggleButton';
 
 /* ─── Helpers ─── */
 
@@ -641,24 +642,27 @@ export default function Home() {
               {loading ? 'loading…' : `${topLevelOpen.length} open${activeCategories.length > 0 ? ' · filtered' : ''}`}
             </p>
           </div>
-          <button
-            onClick={() => setShowAddForm((v) => !v)}
-            style={{
-              padding: '8px 14px',
-              borderRadius: 'var(--r)',
-              background: showAddForm ? 'var(--bg-3)' : 'var(--accent)',
-              color: showAddForm ? 'var(--t1)' : 'var(--accent-text)',
-              border: showAddForm ? '1px solid var(--border-2)' : 'none',
-              cursor: 'pointer',
-              fontSize: 13,
-              fontWeight: 600,
-              minHeight: 44,
-              minWidth: 44,
-              letterSpacing: '0.02em',
-            }}
-          >
-            {showAddForm ? '× close' : '+ add'}
-          </button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <ThemeToggleButton />
+            <button
+              onClick={() => setShowAddForm((v) => !v)}
+              style={{
+                padding: '8px 14px',
+                borderRadius: 'var(--r)',
+                background: showAddForm ? 'var(--bg-3)' : 'var(--accent)',
+                color: showAddForm ? 'var(--t1)' : 'var(--accent-text)',
+                border: showAddForm ? '1px solid var(--border-2)' : 'none',
+                cursor: 'pointer',
+                fontSize: 13,
+                fontWeight: 600,
+                minHeight: 36,
+                minWidth: 44,
+                letterSpacing: '0.02em',
+              }}
+            >
+              {showAddForm ? '× close' : '+ add'}
+            </button>
+          </div>
         </div>
       </header>
 

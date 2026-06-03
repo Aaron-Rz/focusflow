@@ -10,11 +10,11 @@
 /* ─── Theme tokens — dark is default ─── */
 :root {
   --bg:       #0d0d0d;
-  --bg-1:     #131313;
-  --bg-2:     #1c1c1c;
-  --bg-3:     #262626;
-  --border:   #252525;
-  --border-2: #333333;
+  --bg-1:     #1c1c1c;
+  --bg-2:     #272727;
+  --bg-3:     #323232;
+  --border:   #303030;
+  --border-2: #424242;
 
   --t1: #ece8e0;
   --t2: #6e6b66;

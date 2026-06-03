@@ -7,6 +7,7 @@ import { fillWorkblock, workblockToIcs } from '@/lib/scheduling/workblocks';
 import type { Workblock, ScheduleSegment, Task } from '@/types';
 import { downloadFile } from '@/lib/utils/download';
 import { getDistinctCategories } from '@/lib/utils/categories';
+import { ThemeToggleButton } from '@/components/ThemeToggleButton';
 
 /* ─── Helpers ─── */
 
@@ -217,24 +218,27 @@ export default function WorkblocksPage() {
               {loading ? 'loading…' : `${workblocks.length} block${workblocks.length !== 1 ? 's' : ''}`}
             </p>
           </div>
-          <button
-            onClick={() => setShowForm((v) => !v)}
-            style={{
-              padding: '8px 14px',
-              borderRadius: 'var(--r)',
-              background: showForm ? 'var(--bg-3)' : 'var(--accent)',
-              color: showForm ? 'var(--t1)' : 'var(--accent-text)',
-              border: showForm ? '1px solid var(--border-2)' : 'none',
-              cursor: 'pointer',
-              fontSize: 13,
-              fontWeight: 600,
-              minHeight: 44,
-              minWidth: 44,
-              letterSpacing: '0.02em',
-            }}
-          >
-            {showForm ? '× close' : '+ new'}
-          </button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <ThemeToggleButton />
+            <button
+              onClick={() => setShowForm((v) => !v)}
+              style={{
+                padding: '8px 14px',
+                borderRadius: 'var(--r)',
+                background: showForm ? 'var(--bg-3)' : 'var(--accent)',
+                color: showForm ? 'var(--t1)' : 'var(--accent-text)',
+                border: showForm ? '1px solid var(--border-2)' : 'none',
+                cursor: 'pointer',
+                fontSize: 13,
+                fontWeight: 600,
+                minHeight: 36,
+                minWidth: 44,
+                letterSpacing: '0.02em',
+              }}
+            >
+              {showForm ? '× close' : '+ new'}
+            </button>
+          </div>
         </div>
       </header>
 
