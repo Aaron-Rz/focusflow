@@ -23,6 +23,17 @@ export interface Workblock {
   end: string;
   onOverrun: 'abortTask' | 'extendBlock';
   taskIds: string[];
+  pomodoroEnabled?: boolean;
+  pomodoroWorkMin?: number;
+  pomodoroBreakMin?: number;
+}
+
+export interface ScheduleSegment {
+  type: 'task' | 'break';
+  taskId?: string;
+  start: Date;
+  end: Date;
+  isContinuation: boolean;
 }
 
 export interface TimerSession {

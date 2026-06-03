@@ -5,6 +5,7 @@ import { useTaskStore, getTaskDepth } from '@/stores/taskStore';
 import { rankTasks } from '@/lib/algorithm/score';
 import { effectiveEffortMin } from '@/lib/algorithm/dependencies';
 import type { Importance, CogLoad, Task } from '@/types';
+import { TaskTimer } from '@/components/TaskTimer';
 
 const IMP_LABELS: Record<number, string> = { 1: '1-Low', 2: '2-Med', 3: '3-High', 4: '4-Crit' };
 const CL_LABELS: Record<number, string> = { 1: '1-Light', 2: '2-Mod', 3: '3-Heavy' };
@@ -257,6 +258,7 @@ function TaskRow({
             {task.deadline && <span>due: {new Date(task.deadline).toLocaleString()}</span>}
             {isBlocked && blockedBy && <span className="text-gray-400">waiting on: {blockedBy}</span>}
           </div>
+          <TaskTimer taskId={task.id} isDone={task.status === 'done'} />
           {siblingDepOptions.length > 0 && (
             <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
               <label>Must-Do after:</label>

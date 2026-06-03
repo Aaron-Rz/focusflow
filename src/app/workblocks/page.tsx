@@ -4,11 +4,11 @@ import { useEffect, useState } from 'react';
 import { useTaskStore } from '@/stores/taskStore';
 import { useWorkblockStore } from '@/stores/workblockStore';
 import { fillWorkblock, workblockToIcs } from '@/lib/scheduling/workblocks';
-import type { Workblock } from '@/types';
+import type { Workblock, ScheduleSegment, Task } from '@/types';
 
 function formatDuration(minutes: number): string {
   const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
+  const m = Math.round(minutes % 60);
   if (h === 0) return `${m}m`;
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
@@ -16,6 +16,10 @@ function formatDuration(minutes: number): string {
 function toLocalDatetimeValue(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function fmtTime(d: Date): string {
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function downloadIcs(content: string, filename: string) {
@@ -28,9 +32,49 @@ function downloadIcs(content: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+function SegmentList({ segments, taskMap }: { segments: ScheduleSegment[]; taskMap: Map<string, Task> }) {
+  if (segments.length === 0) {
+    return <p className="text-xs text-gray-400 italic">No ready tasks fit this block.</p>;
+  }
+
+  return (
+    <ol className="space-y-0.5 text-sm">
+      {segments.map((seg, i) => {
+        if (seg.type === 'break') {
+          return (
+            <li key={i} className="flex items-center gap-2 text-xs text-gray-400 py-0.5">
+              <span className="w-28 flex-shrink-0 tabular-nums">
+                {fmtTime(seg.start)}–{fmtTime(seg.end)}
+              </span>
+              <span className="italic">☕ Break ({formatDuration((seg.end.getTime() - seg.start.getTime()) / 60_000)})</span>
+            </li>
+          );
+        }
+        const task = seg.taskId ? taskMap.get(seg.taskId) : undefined;
+        const durMin = (seg.end.getTime() - seg.start.getTime()) / 60_000;
+        return (
+          <li key={i} className="flex items-center gap-2">
+            <span className="w-28 flex-shrink-0 tabular-nums text-xs text-gray-500">
+              {fmtTime(seg.start)}–{fmtTime(seg.end)}
+            </span>
+            <span className="flex-1 truncate">
+              {task?.title ?? '(unknown)'}
+              {seg.isContinuation && (
+                <span className="ml-1 text-xs text-blue-500">(cont.)</span>
+              )}
+            </span>
+            <span className="text-xs text-gray-400 flex-shrink-0">{formatDuration(durMin)}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export default function WorkblocksPage() {
   const { tasks, loading: tasksLoading, loadTasks } = useTaskStore();
-  const { workblocks, loading: wbLoading, loadWorkblocks, addWorkblock, deleteWorkblock } = useWorkblockStore();
+  const { workblocks, loading: wbLoading, loadWorkblocks, addWorkblock, deleteWorkblock } =
+    useWorkblockStore();
 
   // Form state
   const now = new Date();
@@ -40,6 +84,9 @@ export default function WorkblocksPage() {
   const [start, setStart] = useState(toLocalDatetimeValue(roundedNow));
   const [end, setEnd] = useState(toLocalDatetimeValue(oneHourLater));
   const [onOverrun, setOnOverrun] = useState<Workblock['onOverrun']>('abortTask');
+  const [pomodoroEnabled, setPomodoroEnabled] = useState(false);
+  const [pomodoroWorkMin, setPomodoroWorkMin] = useState(25);
+  const [pomodoroBreakMin, setPomodoroBreakMin] = useState(5);
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -61,12 +108,25 @@ export default function WorkblocksPage() {
       setFormError('End must be after start.');
       return;
     }
+    if (pomodoroEnabled && pomodoroWorkMin < 1) {
+      setFormError('Work duration must be at least 1 minute.');
+      return;
+    }
     setSubmitting(true);
-    await addWorkblock({ start: startDate.toISOString(), end: endDate.toISOString(), onOverrun });
+    await addWorkblock({
+      start: startDate.toISOString(),
+      end: endDate.toISOString(),
+      onOverrun,
+      pomodoroEnabled,
+      pomodoroWorkMin: pomodoroEnabled ? pomodoroWorkMin : undefined,
+      pomodoroBreakMin: pomodoroEnabled ? pomodoroBreakMin : undefined,
+    });
     setSubmitting(false);
   };
 
   const loading = tasksLoading || wbLoading;
+
+  const taskMap = new Map(tasks.map((t) => [t.id, t]));
 
   return (
     <div className="max-w-2xl mx-auto p-4 font-mono">
@@ -76,16 +136,14 @@ export default function WorkblocksPage() {
       </div>
 
       {/* Create form */}
-      <form
-        onSubmit={handleCreate}
-        className="border border-gray-300 rounded p-4 mb-8 space-y-3"
-      >
+      <form onSubmit={handleCreate} className="border border-gray-300 rounded p-4 mb-8 space-y-3">
         <h2 className="font-semibold text-lg">New Workblock</h2>
         {formError && (
           <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
             {formError}
           </div>
         )}
+
         <div className="flex gap-3 flex-wrap">
           <div className="flex-1 min-w-48">
             <label className="block text-xs mb-0.5">Start</label>
@@ -108,6 +166,7 @@ export default function WorkblocksPage() {
             />
           </div>
         </div>
+
         <div>
           <label className="block text-xs mb-0.5">On overrun</label>
           <select
@@ -119,6 +178,51 @@ export default function WorkblocksPage() {
             <option value="extendBlock">Extend block until task finishes</option>
           </select>
         </div>
+
+        {/* Pomodoro settings */}
+        <div className="border border-gray-200 rounded p-3 space-y-2 bg-gray-50">
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={pomodoroEnabled}
+              onChange={(e) => setPomodoroEnabled(e.target.checked)}
+              className="w-4 h-4"
+            />
+            <span className="text-sm font-medium">Pomodoro mode</span>
+          </label>
+          {pomodoroEnabled && (
+            <div className="flex gap-3 flex-wrap pl-6">
+              <label className="flex items-center gap-1 text-xs">
+                Work
+                <input
+                  type="number"
+                  min={1}
+                  max={120}
+                  value={pomodoroWorkMin}
+                  onChange={(e) => setPomodoroWorkMin(Number(e.target.value))}
+                  className="border border-gray-300 rounded px-1.5 py-0.5 w-14 text-sm"
+                />
+                min
+              </label>
+              <label className="flex items-center gap-1 text-xs">
+                Break
+                <input
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={pomodoroBreakMin}
+                  onChange={(e) => setPomodoroBreakMin(Number(e.target.value))}
+                  className="border border-gray-300 rounded px-1.5 py-0.5 w-14 text-sm"
+                />
+                min
+              </label>
+              <span className="text-xs text-gray-400 self-center">
+                Tasks split across breaks; onOverrun applies only at the outer block end.
+              </span>
+            </div>
+          )}
+        </div>
+
         <button
           type="submit"
           disabled={submitting}
@@ -129,7 +233,6 @@ export default function WorkblocksPage() {
       </form>
 
       {loading && <p className="text-gray-500">Loading…</p>}
-
       {!loading && workblocks.length === 0 && (
         <p className="text-gray-500">No workblocks yet.</p>
       )}
@@ -146,23 +249,37 @@ export default function WorkblocksPage() {
 
             return (
               <li key={wb.id} className="border border-gray-200 rounded p-4">
-                <div className="flex items-start justify-between gap-2 flex-wrap mb-2">
+                <div className="flex items-start justify-between gap-2 flex-wrap mb-3">
                   <div>
                     <div className="font-semibold text-sm">
                       {new Date(wb.start).toLocaleString()} – {new Date(wb.end).toLocaleString()}
                     </div>
-                    <div className="text-xs text-gray-500 mt-0.5">
-                      {formatDuration(blockMin)} block ·{' '}
-                      {wb.onOverrun === 'abortTask' ? 'abort task on overrun' : 'extend block on overrun'} ·{' '}
-                      {filled.filledTasks.length} task{filled.filledTasks.length !== 1 ? 's' : ''} ·{' '}
-                      {formatDuration(Math.round(usedMin))} used
-                      {filled.remainingMinutes > 0 && ` · ${formatDuration(Math.round(filled.remainingMinutes))} free`}
+                    <div className="text-xs text-gray-500 mt-0.5 flex flex-wrap gap-x-2">
+                      <span>{formatDuration(blockMin)} block</span>
+                      <span>·</span>
+                      <span>{wb.onOverrun === 'abortTask' ? 'abort on overrun' : 'extend on overrun'}</span>
+                      {wb.pomodoroEnabled && (
+                        <>
+                          <span>·</span>
+                          <span>🍅 {wb.pomodoroWorkMin ?? 25}/{wb.pomodoroBreakMin ?? 5}m</span>
+                        </>
+                      )}
+                      <span>·</span>
+                      <span>{filled.filledTasks.length} task{filled.filledTasks.length !== 1 ? 's' : ''}</span>
+                      <span>·</span>
+                      <span>{formatDuration(Math.round(usedMin))} used</span>
+                      {filled.remainingMinutes > 0.5 && (
+                        <>
+                          <span>·</span>
+                          <span>{formatDuration(Math.round(filled.remainingMinutes))} free</span>
+                        </>
+                      )}
                     </div>
                   </div>
                   <div className="flex gap-2">
                     <button
                       onClick={() => {
-                        const ics = workblockToIcs(filled);
+                        const ics = workblockToIcs(filled, taskMap);
                         downloadIcs(ics, `workblock-${wb.id.slice(0, 8)}.ics`);
                       }}
                       className="text-xs bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded px-2 py-1"
@@ -178,24 +295,7 @@ export default function WorkblocksPage() {
                   </div>
                 </div>
 
-                {filled.filledTasks.length === 0 ? (
-                  <p className="text-xs text-gray-400 italic">No ready tasks fit this block.</p>
-                ) : (
-                  <ol className="space-y-1">
-                    {filled.filledTasks.map((task, i) => (
-                      <li key={task.id} className="flex items-center gap-2 text-sm">
-                        <span className="text-gray-400 w-5 text-right flex-shrink-0">{i + 1}.</span>
-                        <span className="flex-1 truncate">{task.title}</span>
-                        <span className="text-xs text-gray-400 flex-shrink-0">{task.effortMin}m</span>
-                        {task.deadline && (
-                          <span className="text-xs text-gray-400 flex-shrink-0">
-                            due {new Date(task.deadline).toLocaleDateString()}
-                          </span>
-                        )}
-                      </li>
-                    ))}
-                  </ol>
-                )}
+                <SegmentList segments={filled.segments} taskMap={taskMap} />
               </li>
             );
           })}
