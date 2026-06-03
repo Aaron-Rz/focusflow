@@ -11,15 +11,15 @@ export function BackupReminderBanner() {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    const last = localStorage.getItem(STORAGE_KEY);
-    const lastMs = last ? parseInt(last, 10) : 0;
-    if (Date.now() - lastMs >= ONE_WEEK_MS) {
-      setVisible(true);
-    }
+    try {
+      const last   = localStorage.getItem(STORAGE_KEY);
+      const lastMs = last ? parseInt(last, 10) : 0;
+      if (Date.now() - lastMs >= ONE_WEEK_MS) setVisible(true);
+    } catch {}
   }, []);
 
   function dismiss() {
-    localStorage.setItem(STORAGE_KEY, String(Date.now()));
+    try { localStorage.setItem(STORAGE_KEY, String(Date.now())); } catch {}
     setVisible(false);
   }
 
@@ -32,19 +32,50 @@ export function BackupReminderBanner() {
   if (!visible) return null;
 
   return (
-    <div className="w-full bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-3 text-sm">
-      <span className="flex-1 text-amber-800">
-        iOS may clear local data for unused PWAs — back up your tasks weekly.
+    <div
+      style={{
+        background: 'var(--bg-2)',
+        borderBottom: '1px solid var(--warn)',
+        padding: '8px 16px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        fontSize: 12,
+      }}
+    >
+      <span style={{ flex: 1, color: 'var(--t1)', lineHeight: 1.4 }}>
+        <span style={{ color: 'var(--warn)', fontWeight: 600, marginRight: 4 }}>⚠</span>
+        iOS may clear local data — back up weekly.
       </span>
       <button
         onClick={handleExport}
-        className="bg-amber-600 text-white rounded px-3 py-1 text-xs hover:bg-amber-700"
+        style={{
+          fontSize: 11,
+          padding: '4px 10px',
+          borderRadius: 'var(--r)',
+          background: 'var(--warn)',
+          color: '#fff',
+          border: 'none',
+          cursor: 'pointer',
+          fontWeight: 600,
+          minHeight: 28,
+          flexShrink: 0,
+        }}
       >
-        Export backup
+        Export
       </button>
       <button
         onClick={dismiss}
-        className="text-amber-500 hover:text-amber-700 text-xs underline"
+        style={{
+          fontSize: 11,
+          color: 'var(--t3)',
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          textDecoration: 'underline',
+          padding: 0,
+          flexShrink: 0,
+        }}
       >
         Dismiss
       </button>

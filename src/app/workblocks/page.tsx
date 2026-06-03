@@ -8,6 +8,8 @@ import type { Workblock, ScheduleSegment, Task } from '@/types';
 import { downloadFile } from '@/lib/utils/download';
 import { getDistinctCategories } from '@/lib/utils/categories';
 
+/* ─── Helpers ─── */
+
 function formatDuration(minutes: number): string {
   const h = Math.floor(minutes / 60);
   const m = Math.round(minutes % 60);
@@ -24,38 +26,91 @@ function fmtTime(d: Date): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function fmtDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
+    ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+const sectionLabel: React.CSSProperties = {
+  fontFamily: 'var(--ff-syne, sans-serif)',
+  fontWeight: 700,
+  fontSize: 11,
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  color: 'var(--t2)',
+};
+
+/* ─── Segment timeline ─── */
+
 function SegmentList({ segments, taskMap }: { segments: ScheduleSegment[]; taskMap: Map<string, Task> }) {
   if (segments.length === 0) {
-    return <p className="text-xs text-gray-400 italic">No ready tasks fit this block.</p>;
+    return (
+      <p style={{ fontSize: 12, color: 'var(--t3)', fontStyle: 'italic', padding: '4px 0' }}>
+        No ready tasks fit this block.
+      </p>
+    );
   }
 
   return (
-    <ol className="space-y-0.5 text-sm">
+    <ol style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
       {segments.map((seg, i) => {
-        if (seg.type === 'break') {
-          return (
-            <li key={i} className="flex items-center gap-2 text-xs text-gray-400 py-0.5">
-              <span className="w-28 flex-shrink-0 tabular-nums">
-                {fmtTime(seg.start)}–{fmtTime(seg.end)}
-              </span>
-              <span className="italic">☕ Break ({formatDuration((seg.end.getTime() - seg.start.getTime()) / 60_000)})</span>
-            </li>
-          );
-        }
-        const task = seg.taskId ? taskMap.get(seg.taskId) : undefined;
+        const isBreak = seg.type === 'break';
         const durMin = (seg.end.getTime() - seg.start.getTime()) / 60_000;
+        const task = (!isBreak && seg.taskId) ? taskMap.get(seg.taskId) : undefined;
+
         return (
-          <li key={i} className="flex items-center gap-2">
-            <span className="w-28 flex-shrink-0 tabular-nums text-xs text-gray-500">
+          <li
+            key={i}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '4px 8px',
+              borderRadius: 'var(--r)',
+              background: isBreak ? 'transparent' : 'var(--bg-2)',
+              borderLeft: isBreak
+                ? '2px solid var(--border-2)'
+                : '2px solid var(--accent)',
+              opacity: isBreak ? 0.6 : 1,
+            }}
+          >
+            <span
+              className="tabular-nums"
+              style={{
+                fontSize: 11,
+                color: 'var(--t2)',
+                flexShrink: 0,
+                width: 100,
+              }}
+            >
               {fmtTime(seg.start)}–{fmtTime(seg.end)}
             </span>
-            <span className="flex-1 truncate">
-              {task?.title ?? '(unknown)'}
-              {seg.isContinuation && (
-                <span className="ml-1 text-xs text-blue-500">(cont.)</span>
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                fontSize: 12,
+                color: isBreak ? 'var(--t3)' : 'var(--t1)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {isBreak
+                ? `break (${formatDuration(durMin)})`
+                : task?.title ?? '(unknown)'
+              }
+              {!isBreak && seg.isContinuation && (
+                <span style={{ fontSize: 10, color: 'var(--t3)', marginLeft: 4 }}>(cont.)</span>
               )}
             </span>
-            <span className="text-xs text-gray-400 flex-shrink-0">{formatDuration(durMin)}</span>
+            <span
+              style={{ fontSize: 11, color: 'var(--t3)', flexShrink: 0 }}
+              className="tabular-nums"
+            >
+              {formatDuration(Math.round(durMin))}
+            </span>
           </li>
         );
       })}
@@ -63,25 +118,27 @@ function SegmentList({ segments, taskMap }: { segments: ScheduleSegment[]; taskM
   );
 }
 
+/* ─── WorkblocksPage ─── */
+
 export default function WorkblocksPage() {
   const { tasks, loading: tasksLoading, loadTasks } = useTaskStore();
   const { workblocks, loading: wbLoading, loadWorkblocks, addWorkblock, deleteWorkblock } =
     useWorkblockStore();
 
-  // Form state
   const now = new Date();
-  const roundedNow = new Date(Math.ceil(now.getTime() / 60_000) * 60_000);
+  const roundedNow   = new Date(Math.ceil(now.getTime() / 60_000) * 60_000);
   const oneHourLater = new Date(roundedNow.getTime() + 60 * 60_000);
 
-  const [start, setStart] = useState(toLocalDatetimeValue(roundedNow));
-  const [end, setEnd] = useState(toLocalDatetimeValue(oneHourLater));
-  const [onOverrun, setOnOverrun] = useState<Workblock['onOverrun']>('abortTask');
+  const [showForm, setShowForm]         = useState(false);
+  const [start, setStart]               = useState(toLocalDatetimeValue(roundedNow));
+  const [end, setEnd]                   = useState(toLocalDatetimeValue(oneHourLater));
+  const [onOverrun, setOnOverrun]       = useState<Workblock['onOverrun']>('abortTask');
   const [pomodoroEnabled, setPomodoroEnabled] = useState(false);
   const [pomodoroWorkMin, setPomodoroWorkMin] = useState(25);
   const [pomodoroBreakMin, setPomodoroBreakMin] = useState(5);
   const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
-  const [formError, setFormError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError]       = useState('');
+  const [submitting, setSubmitting]     = useState(false);
 
   useEffect(() => {
     loadTasks();
@@ -92,7 +149,7 @@ export default function WorkblocksPage() {
     e.preventDefault();
     setFormError('');
     const startDate = new Date(start);
-    const endDate = new Date(end);
+    const endDate   = new Date(end);
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
       setFormError('Invalid dates.');
       return;
@@ -116,238 +173,384 @@ export default function WorkblocksPage() {
       pomodoroBreakMin: pomodoroEnabled ? pomodoroBreakMin : undefined,
     });
     setSubmitting(false);
+    setShowForm(false);
   };
 
   const loading = tasksLoading || wbLoading;
-
   const taskMap = new Map(tasks.map((t) => [t.id, t]));
+  const cats    = getDistinctCategories(tasks);
+
+  const fieldLabel: React.CSSProperties = {
+    display: 'block', fontSize: 10, letterSpacing: '0.05em',
+    textTransform: 'uppercase', color: 'var(--t2)', marginBottom: 4,
+  };
 
   return (
-    <div className="max-w-2xl mx-auto p-4 font-mono">
-      <div className="flex items-center gap-3 mb-6">
-        <a href="/" className="text-sm text-blue-500 hover:underline">← Tasks</a>
-        <h1 className="text-2xl font-bold">Workblocks</h1>
-      </div>
+    <div style={{ background: 'var(--bg)', minHeight: '100dvh' }}>
 
-      {/* Create form */}
-      <form onSubmit={handleCreate} className="border border-gray-300 rounded p-4 mb-8 space-y-3">
-        <h2 className="font-semibold text-lg">New Workblock</h2>
-        {formError && (
-          <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
-            {formError}
+      {/* ── Sticky header ── */}
+      <header
+        style={{
+          position: 'sticky', top: 0, zIndex: 40,
+          background: 'var(--bg-1)',
+          borderBottom: '1px solid var(--border)',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 640, margin: '0 auto',
+            padding: '10px 16px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          }}
+        >
+          <div>
+            <h1
+              style={{
+                fontFamily: 'var(--ff-syne, sans-serif)',
+                fontWeight: 800, fontSize: 18,
+                letterSpacing: '-0.02em', color: 'var(--t1)', lineHeight: 1,
+              }}
+            >
+              Workblocks
+            </h1>
+            <p style={{ fontSize: 11, color: 'var(--t2)', marginTop: 2 }}>
+              {loading ? 'loading…' : `${workblocks.length} block${workblocks.length !== 1 ? 's' : ''}`}
+            </p>
+          </div>
+          <button
+            onClick={() => setShowForm((v) => !v)}
+            style={{
+              padding: '8px 14px',
+              borderRadius: 'var(--r)',
+              background: showForm ? 'var(--bg-3)' : 'var(--accent)',
+              color: showForm ? 'var(--t1)' : 'var(--accent-text)',
+              border: showForm ? '1px solid var(--border-2)' : 'none',
+              cursor: 'pointer',
+              fontSize: 13,
+              fontWeight: 600,
+              minHeight: 44,
+              minWidth: 44,
+              letterSpacing: '0.02em',
+            }}
+          >
+            {showForm ? '× close' : '+ new'}
+          </button>
+        </div>
+      </header>
+
+      {/* ── Create form (collapsible) ── */}
+      {showForm && (
+        <div style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-1)' }}>
+          <form
+            onSubmit={handleCreate}
+            style={{ maxWidth: 640, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 12 }}
+          >
+            {formError && (
+              <div
+                style={{
+                  fontSize: 12, color: 'var(--error)',
+                  background: 'rgba(192,48,48,0.08)',
+                  border: '1px solid var(--error)',
+                  borderRadius: 'var(--r)',
+                  padding: '6px 10px',
+                }}
+              >
+                {formError}
+              </div>
+            )}
+
+            {/* Start / End */}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ flex: '1 1 160px' }}>
+                <label style={fieldLabel}>Start</label>
+                <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} required style={{ width: '100%' }} />
+              </div>
+              <div style={{ flex: '1 1 160px' }}>
+                <label style={fieldLabel}>End</label>
+                <input type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} required style={{ width: '100%' }} />
+              </div>
+            </div>
+
+            {/* Overrun */}
+            <div>
+              <label style={fieldLabel}>On overrun</label>
+              <select value={onOverrun} onChange={(e) => setOnOverrun(e.target.value as Workblock['onOverrun'])} style={{ width: '100%' }}>
+                <option value="abortTask">Abort task at block end</option>
+                <option value="extendBlock">Extend block until task finishes</option>
+              </select>
+            </div>
+
+            {/* Category filter */}
+            {cats.length > 0 && (
+              <div>
+                <label style={fieldLabel}>Include categories (empty = all)</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 6px', marginBottom: categoryFilter.length > 0 ? 6 : 0 }}>
+                  {cats.map((cat) => {
+                    const active = categoryFilter.includes(cat);
+                    return (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() =>
+                          setCategoryFilter(
+                            active ? categoryFilter.filter((c) => c !== cat) : [...categoryFilter, cat]
+                          )
+                        }
+                        style={{
+                          fontSize: 11,
+                          padding: '3px 8px',
+                          borderRadius: 'var(--r)',
+                          border: '1px solid',
+                          borderColor: active ? 'var(--accent)' : 'var(--border-2)',
+                          background: active ? 'var(--accent-dim)' : 'transparent',
+                          color: active ? 'var(--accent)' : 'var(--t2)',
+                          cursor: 'pointer',
+                          minHeight: 28,
+                        }}
+                      >
+                        #{cat}
+                      </button>
+                    );
+                  })}
+                  {categoryFilter.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setCategoryFilter([])}
+                      style={{ fontSize: 11, color: 'var(--t3)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
+                    >
+                      clear
+                    </button>
+                  )}
+                </div>
+                {categoryFilter.length > 0 && (
+                  <p style={{ fontSize: 11, color: 'var(--accent)', margin: 0 }}>
+                    Only: {categoryFilter.map((c) => `#${c}`).join(', ')}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Pomodoro */}
+            <div
+              style={{
+                border: '1px solid var(--border-2)',
+                borderRadius: 'var(--r)',
+                padding: '10px 12px',
+                background: 'var(--bg-2)',
+              }}
+            >
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+                <input
+                  type="checkbox"
+                  checked={pomodoroEnabled}
+                  onChange={(e) => setPomodoroEnabled(e.target.checked)}
+                  style={{ width: 16, height: 16 }}
+                />
+                <span style={{ fontSize: 13, color: 'var(--t1)', fontWeight: 500 }}>Pomodoro mode</span>
+              </label>
+              {pomodoroEnabled && (
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 10, paddingLeft: 24 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--t2)' }}>
+                    Work
+                    <input
+                      type="number"
+                      min={1}
+                      max={120}
+                      value={pomodoroWorkMin}
+                      onChange={(e) => setPomodoroWorkMin(Number(e.target.value))}
+                      style={{ width: 52, textAlign: 'center' }}
+                    />
+                    min
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--t2)' }}>
+                    Break
+                    <input
+                      type="number"
+                      min={1}
+                      max={60}
+                      value={pomodoroBreakMin}
+                      onChange={(e) => setPomodoroBreakMin(Number(e.target.value))}
+                      style={{ width: 52, textAlign: 'center' }}
+                    />
+                    min
+                  </label>
+                  <span style={{ fontSize: 11, color: 'var(--t3)', alignSelf: 'center' }}>
+                    tasks split across breaks
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Submit */}
+            <button
+              type="submit"
+              disabled={submitting}
+              style={{
+                padding: '10px 16px',
+                borderRadius: 'var(--r)',
+                background: 'var(--accent)',
+                color: 'var(--accent-text)',
+                border: 'none',
+                cursor: submitting ? 'default' : 'pointer',
+                opacity: submitting ? 0.5 : 1,
+                fontSize: 13,
+                fontWeight: 600,
+                minHeight: 44,
+                letterSpacing: '0.03em',
+              }}
+            >
+              {submitting ? 'Creating…' : 'Create & Auto-fill'}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* ── Workblock list ── */}
+      <main style={{ maxWidth: 640, margin: '0 auto', padding: '12px 16px 24px' }}>
+        {loading && (
+          <p style={{ color: 'var(--t3)', fontSize: 13, padding: '24px 0' }}>Loading…</p>
+        )}
+        {!loading && workblocks.length === 0 && (
+          <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--t3)', fontSize: 13 }}>
+            <p>No workblocks. Tap <strong style={{ color: 'var(--t2)' }}>+ new</strong> to create one.</p>
           </div>
         )}
 
-        <div className="flex gap-3 flex-wrap">
-          <div className="flex-1 min-w-48">
-            <label className="block text-xs mb-0.5">Start</label>
-            <input
-              type="datetime-local"
-              className="border border-gray-300 rounded px-2 py-1 w-full text-sm"
-              value={start}
-              onChange={(e) => setStart(e.target.value)}
-              required
-            />
-          </div>
-          <div className="flex-1 min-w-48">
-            <label className="block text-xs mb-0.5">End</label>
-            <input
-              type="datetime-local"
-              className="border border-gray-300 rounded px-2 py-1 w-full text-sm"
-              value={end}
-              onChange={(e) => setEnd(e.target.value)}
-              required
-            />
-          </div>
-        </div>
+        <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {workblocks
+            .slice()
+            .sort((a, b) => new Date(b.start).getTime() - new Date(a.start).getTime())
+            .map((wb) => {
+              const filled  = fillWorkblock(wb, tasks, new Date());
+              const blockMin = (new Date(wb.end).getTime() - new Date(wb.start).getTime()) / 60_000;
+              const usedMin  = blockMin - filled.remainingMinutes;
+              const usedPct  = blockMin > 0 ? Math.min(100, (usedMin / blockMin) * 100) : 0;
 
-        <div>
-          <label className="block text-xs mb-0.5">On overrun</label>
-          <select
-            className="border border-gray-300 rounded px-2 py-1 text-sm"
-            value={onOverrun}
-            onChange={(e) => setOnOverrun(e.target.value as Workblock['onOverrun'])}
-          >
-            <option value="abortTask">Abort task at block end</option>
-            <option value="extendBlock">Extend block until task finishes</option>
-          </select>
-        </div>
-
-        {/* Category filter */}
-        {(() => {
-          const cats = getDistinctCategories(tasks);
-          if (cats.length === 0) return null;
-          return (
-            <div>
-              <label className="block text-xs mb-1">Include only these categories (leave empty for all)</label>
-              <div className="flex flex-wrap gap-1.5">
-                {cats.map((cat) => {
-                  const active = categoryFilter.includes(cat);
-                  return (
-                    <button
-                      key={cat}
-                      type="button"
-                      onClick={() =>
-                        setCategoryFilter(
-                          active ? categoryFilter.filter((c) => c !== cat) : [...categoryFilter, cat]
-                        )
-                      }
-                      className={`px-2 py-0.5 rounded text-xs border ${
-                        active
-                          ? 'bg-indigo-600 text-white border-indigo-600'
-                          : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'
-                      }`}
-                    >
-                      #{cat}
-                    </button>
-                  );
-                })}
-                {categoryFilter.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setCategoryFilter([])}
-                    className="px-2 py-0.5 rounded text-xs text-gray-400 hover:text-gray-600 underline"
-                  >
-                    clear
-                  </button>
-                )}
-              </div>
-              {categoryFilter.length > 0 && (
-                <p className="text-xs text-indigo-600 mt-1">
-                  Only tasks in: {categoryFilter.map((c) => `#${c}`).join(', ')}
-                </p>
-              )}
-            </div>
-          );
-        })()}
-
-        {/* Pomodoro settings */}
-        <div className="border border-gray-200 rounded p-3 space-y-2 bg-gray-50">
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={pomodoroEnabled}
-              onChange={(e) => setPomodoroEnabled(e.target.checked)}
-              className="w-4 h-4"
-            />
-            <span className="text-sm font-medium">Pomodoro mode</span>
-          </label>
-          {pomodoroEnabled && (
-            <div className="flex gap-3 flex-wrap pl-6">
-              <label className="flex items-center gap-1 text-xs">
-                Work
-                <input
-                  type="number"
-                  min={1}
-                  max={120}
-                  value={pomodoroWorkMin}
-                  onChange={(e) => setPomodoroWorkMin(Number(e.target.value))}
-                  className="border border-gray-300 rounded px-1.5 py-0.5 w-14 text-sm"
-                />
-                min
-              </label>
-              <label className="flex items-center gap-1 text-xs">
-                Break
-                <input
-                  type="number"
-                  min={1}
-                  max={60}
-                  value={pomodoroBreakMin}
-                  onChange={(e) => setPomodoroBreakMin(Number(e.target.value))}
-                  className="border border-gray-300 rounded px-1.5 py-0.5 w-14 text-sm"
-                />
-                min
-              </label>
-              <span className="text-xs text-gray-400 self-center">
-                Tasks split across breaks; onOverrun applies only at the outer block end.
-              </span>
-            </div>
-          )}
-        </div>
-
-        <button
-          type="submit"
-          disabled={submitting}
-          className="bg-blue-600 text-white rounded px-3 py-1 text-sm disabled:opacity-50"
-        >
-          {submitting ? 'Creating…' : 'Create & Auto-fill'}
-        </button>
-      </form>
-
-      {loading && <p className="text-gray-500">Loading…</p>}
-      {!loading && workblocks.length === 0 && (
-        <p className="text-gray-500">No workblocks yet.</p>
-      )}
-
-      {/* Workblock list */}
-      <ul className="space-y-6">
-        {workblocks
-          .slice()
-          .sort((a, b) => new Date(b.start).getTime() - new Date(a.start).getTime())
-          .map((wb) => {
-            const filled = fillWorkblock(wb, tasks, new Date());
-            const blockMin = (new Date(wb.end).getTime() - new Date(wb.start).getTime()) / 60_000;
-            const usedMin = blockMin - filled.remainingMinutes;
-
-            return (
-              <li key={wb.id} className="border border-gray-200 rounded p-4">
-                <div className="flex items-start justify-between gap-2 flex-wrap mb-3">
-                  <div>
-                    <div className="font-semibold text-sm">
-                      {new Date(wb.start).toLocaleString()} – {new Date(wb.end).toLocaleString()}
-                    </div>
-                    <div className="text-xs text-gray-500 mt-0.5 flex flex-wrap gap-x-2">
-                      <span>{formatDuration(blockMin)} block</span>
-                      <span>·</span>
-                      <span>{wb.onOverrun === 'abortTask' ? 'abort on overrun' : 'extend on overrun'}</span>
-                      {wb.categoryFilter && wb.categoryFilter.length > 0 && (
-                        <>
-                          <span>·</span>
-                          <span>{wb.categoryFilter.map((c) => `#${c}`).join(' ')}</span>
-                        </>
-                      )}
-                      {wb.pomodoroEnabled && (
-                        <>
-                          <span>·</span>
-                          <span>🍅 {wb.pomodoroWorkMin ?? 25}/{wb.pomodoroBreakMin ?? 5}m</span>
-                        </>
-                      )}
-                      <span>·</span>
-                      <span>{filled.filledTasks.length} task{filled.filledTasks.length !== 1 ? 's' : ''}</span>
-                      <span>·</span>
-                      <span>{formatDuration(Math.round(usedMin))} used</span>
-                      {filled.remainingMinutes > 0.5 && (
-                        <>
-                          <span>·</span>
-                          <span>{formatDuration(Math.round(filled.remainingMinutes))} free</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => {
-                        const ics = workblockToIcs(filled, taskMap);
-                        downloadFile(ics, `workblock-${wb.id.slice(0, 8)}.ics`, 'text/calendar;charset=utf-8');
+              return (
+                <li
+                  key={wb.id}
+                  style={{
+                    background: 'var(--bg-1)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--r-md)',
+                    overflow: 'hidden',
+                  }}
+                >
+                  {/* Usage bar */}
+                  <div style={{ height: 2, background: 'var(--bg-3)' }}>
+                    <div
+                      style={{
+                        height: '100%',
+                        width: `${usedPct.toFixed(1)}%`,
+                        background: 'var(--accent)',
                       }}
-                      className="text-xs bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded px-2 py-1"
-                    >
-                      Export .ics
-                    </button>
-                    <button
-                      onClick={() => deleteWorkblock(wb.id)}
-                      className="text-xs text-red-500 hover:underline"
-                    >
-                      Delete
-                    </button>
+                    />
                   </div>
-                </div>
 
-                <SegmentList segments={filled.segments} taskMap={taskMap} />
-              </li>
-            );
-          })}
-      </ul>
+                  {/* Header */}
+                  <div style={{ padding: '10px 12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                      {/* Info */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 600,
+                            color: 'var(--t1)',
+                            margin: 0,
+                            lineHeight: 1.3,
+                          }}
+                        >
+                          {fmtDate(wb.start)} → {fmtDate(wb.end)}
+                        </p>
+                        <div
+                          style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: '2px 8px',
+                            marginTop: 4,
+                            fontSize: 11,
+                            color: 'var(--t2)',
+                          }}
+                        >
+                          <span>{formatDuration(Math.round(blockMin))} block</span>
+                          <span style={{ color: 'var(--border-2)' }}>·</span>
+                          <span>{formatDuration(Math.round(usedMin))} used</span>
+                          {filled.remainingMinutes > 0.5 && (
+                            <>
+                              <span style={{ color: 'var(--border-2)' }}>·</span>
+                              <span style={{ color: 'var(--t3)' }}>{formatDuration(Math.round(filled.remainingMinutes))} free</span>
+                            </>
+                          )}
+                          <span style={{ color: 'var(--border-2)' }}>·</span>
+                          <span>{filled.filledTasks.length} task{filled.filledTasks.length !== 1 ? 's' : ''}</span>
+                          <span style={{ color: 'var(--border-2)' }}>·</span>
+                          <span>{wb.onOverrun === 'abortTask' ? 'abort' : 'extend'}</span>
+                          {wb.categoryFilter && wb.categoryFilter.length > 0 && (
+                            <>
+                              <span style={{ color: 'var(--border-2)' }}>·</span>
+                              <span style={{ color: 'var(--accent)' }}>
+                                {wb.categoryFilter.map((c) => `#${c}`).join(' ')}
+                              </span>
+                            </>
+                          )}
+                          {wb.pomodoroEnabled && (
+                            <>
+                              <span style={{ color: 'var(--border-2)' }}>·</span>
+                              <span>🍅 {wb.pomodoroWorkMin ?? 25}/{wb.pomodoroBreakMin ?? 5}m</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                        <button
+                          onClick={() => {
+                            const ics = workblockToIcs(filled, taskMap);
+                            downloadFile(ics, `workblock-${wb.id.slice(0, 8)}.ics`, 'text/calendar;charset=utf-8');
+                          }}
+                          style={{
+                            fontSize: 11,
+                            padding: '4px 8px',
+                            borderRadius: 'var(--r)',
+                            border: '1px solid var(--border-2)',
+                            background: 'transparent',
+                            color: 'var(--t2)',
+                            cursor: 'pointer',
+                            minHeight: 28,
+                          }}
+                        >
+                          .ics
+                        </button>
+                        <button
+                          onClick={() => deleteWorkblock(wb.id)}
+                          style={{
+                            fontSize: 11,
+                            padding: '4px 8px',
+                            borderRadius: 'var(--r)',
+                            border: '1px solid transparent',
+                            background: 'transparent',
+                            color: 'var(--error)',
+                            cursor: 'pointer',
+                            minHeight: 28,
+                          }}
+                        >
+                          del
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Segment list */}
+                    <div style={{ marginTop: 10 }}>
+                      <SegmentList segments={filled.segments} taskMap={taskMap} />
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+        </ul>
+      </main>
     </div>
   );
 }

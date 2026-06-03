@@ -8,43 +8,71 @@ import { effectiveEffortMin } from '@/lib/algorithm/dependencies';
 import { getDistinctCategories } from '@/lib/utils/categories';
 import type { Importance, CogLoad, Task } from '@/types';
 import { TaskTimer } from '@/components/TaskTimer';
+import { PomodoroTimer } from '@/components/PomodoroTimer';
 
-const IMP_LABELS: Record<number, string> = { 1: '1-Low', 2: '2-Med', 3: '3-High', 4: '4-Crit' };
-const CL_LABELS: Record<number, string> = { 1: '1-Light', 2: '2-Mod', 3: '3-Heavy' };
+/* ─── Helpers ─── */
+
+const IMP_LABELS: Record<number, string> = { 1: '1', 2: '2', 3: '3', 4: '4' };
+const CL_LABELS: Record<number, string>  = { 1: '1', 2: '2', 3: '3' };
+
+function scoreBadgeColor(score: number) {
+  if (score >= 0.65) return 'var(--accent)';
+  if (score >= 0.35) return 'var(--t2)';
+  return 'var(--t3)';
+}
+
+function fmtDeadline(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/* ─── Label ─── */
+function Label({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  return (
+    <span
+      style={{
+        fontSize: 10,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        fontWeight: 600,
+        padding: '1px 5px',
+        borderRadius: 'var(--r)',
+        border: '1px solid',
+        ...style,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+/* ─── AddTaskForm ─── */
 
 interface AddTaskFormProps {
   parentId?: string;
-  parentDepth?: number;
   tasks: Task[];
   onAdd: (input: {
-    title: string;
-    effortMin: number;
-    importance: Importance;
-    cogLoad: CogLoad;
-    deadline?: string;
-    category?: string;
-    dependsOnId?: string;
-    parentId?: string;
+    title: string; effortMin: number; importance: Importance; cogLoad: CogLoad;
+    deadline?: string; category?: string; dependsOnId?: string; parentId?: string;
   }) => Promise<string | null>;
   onCancel?: () => void;
   compact?: boolean;
 }
 
 function AddTaskForm({ parentId, tasks, onAdd, onCancel, compact = false }: AddTaskFormProps) {
-  const [title, setTitle] = useState('');
+  const [title, setTitle]         = useState('');
   const [effortMin, setEffortMin] = useState(30);
   const [importance, setImportance] = useState<Importance>(2);
-  const [cogLoad, setCogLoad] = useState<CogLoad>(2);
-  const [deadline, setDeadline] = useState('');
-  const [category, setCategory] = useState('');
+  const [cogLoad, setCogLoad]     = useState<CogLoad>(2);
+  const [deadline, setDeadline]   = useState('');
+  const [category, setCategory]   = useState('');
+  const [dependsOnId, setDependsOnId] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError]         = useState('');
 
-  // For sibling Must-Do: only siblings (same parent) are valid options
   const siblingOptions = parentId
     ? tasks.filter((t) => t.parentId === parentId)
     : tasks.filter((t) => !t.parentId);
-  const [dependsOnId, setDependsOnId] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,10 +80,7 @@ function AddTaskForm({ parentId, tasks, onAdd, onCancel, compact = false }: AddT
     setError('');
     setSubmitting(true);
     const err = await onAdd({
-      title: title.trim(),
-      effortMin,
-      importance,
-      cogLoad,
+      title: title.trim(), effortMin, importance, cogLoad,
       deadline: deadline || undefined,
       category: category.trim() || undefined,
       dependsOnId: dependsOnId || undefined,
@@ -63,113 +88,196 @@ function AddTaskForm({ parentId, tasks, onAdd, onCancel, compact = false }: AddT
     });
     setSubmitting(false);
     if (err) { setError(err); return; }
-    setTitle('');
-    setEffortMin(30);
-    setImportance(2);
-    setCogLoad(2);
-    setDeadline('');
-    setCategory('');
-    setDependsOnId('');
+    setTitle(''); setEffortMin(30); setImportance(2); setCogLoad(2);
+    setDeadline(''); setCategory(''); setDependsOnId('');
     if (onCancel) onCancel();
   };
 
+  const fieldLabel: React.CSSProperties = {
+    display: 'block', fontSize: 10, letterSpacing: '0.05em',
+    textTransform: 'uppercase', color: 'var(--t2)', marginBottom: 4,
+  };
+
+  if (compact) {
+    return (
+      <form
+        onSubmit={handleSubmit}
+        style={{
+          marginTop: 10,
+          paddingTop: 10,
+          borderTop: '1px solid var(--border)',
+        }}
+      >
+        {error && (
+          <p style={{ fontSize: 11, color: 'var(--error)', marginBottom: 6 }}>{error}</p>
+        )}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Subtask title…"
+            required
+            autoFocus
+            style={{ flex: 1, minWidth: 0 }}
+          />
+          <select
+            value={effortMin}
+            onChange={(e) => setEffortMin(Number(e.target.value))}
+            style={{ width: 64 }}
+          >
+            {[5,10,15,20,30,45,60,90,120].map(v => <option key={v} value={v}>{v}m</option>)}
+          </select>
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button
+            type="submit"
+            disabled={submitting || !title.trim()}
+            style={{
+              padding: '5px 12px',
+              borderRadius: 'var(--r)',
+              background: 'var(--accent)',
+              color: 'var(--accent-text)',
+              border: 'none',
+              cursor: submitting || !title.trim() ? 'default' : 'pointer',
+              opacity: submitting || !title.trim() ? 0.5 : 1,
+              fontSize: 12,
+              fontWeight: 600,
+              minHeight: 30,
+            }}
+          >
+            {submitting ? 'Adding…' : 'Add'}
+          </button>
+          {onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              style={{
+                padding: '5px 10px',
+                borderRadius: 'var(--r)',
+                background: 'transparent',
+                border: '1px solid var(--border-2)',
+                color: 'var(--t2)',
+                cursor: 'pointer',
+                fontSize: 12,
+                minHeight: 30,
+              }}
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+      </form>
+    );
+  }
+
   return (
-    <form onSubmit={handleSubmit} className={`space-y-2 ${compact ? 'mt-2 pl-2 border-l-2 border-blue-200' : 'border border-gray-300 rounded p-4 mb-8'}`}>
-      {!compact && <h2 className="font-semibold text-lg">New Task</h2>}
-      {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{error}</div>}
-      <div>
-        <input
-          className="border border-gray-300 rounded px-2 py-1 w-full text-sm"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder={compact ? 'Subtask title…' : 'Task title'}
-          required
-          autoFocus={compact}
-        />
-      </div>
-      <div className="flex gap-2 flex-wrap">
-        <div>
-          <label className="block text-xs mb-0.5">Effort (min)</label>
+    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {error && (
+        <div style={{
+          fontSize: 12, color: 'var(--error)',
+          background: 'rgba(192,48,48,0.08)',
+          border: '1px solid var(--error)',
+          borderRadius: 'var(--r)',
+          padding: '6px 10px',
+        }}>
+          {error}
+        </div>
+      )}
+      {/* Title */}
+      <input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder="Task title"
+        required
+        autoFocus
+      />
+      {/* Row: effort · importance · cogLoad */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ flex: '0 0 80px' }}>
+          <label style={fieldLabel}>Effort (min)</label>
           <input
             type="number"
             min={1}
-            className="border border-gray-300 rounded px-2 py-1 w-20 text-sm"
             value={effortMin}
             onChange={(e) => setEffortMin(Number(e.target.value))}
+            style={{ width: '100%' }}
           />
         </div>
-        <div>
-          <label className="block text-xs mb-0.5">Importance</label>
-          <select
-            className="border border-gray-300 rounded px-2 py-1 text-sm"
-            value={importance}
-            onChange={(e) => setImportance(Number(e.target.value) as Importance)}
-          >
-            {([1, 2, 3, 4] as Importance[]).map((v) => (
-              <option key={v} value={v}>{IMP_LABELS[v]}</option>
+        <div style={{ flex: '1 1 100px' }}>
+          <label style={fieldLabel}>Importance</label>
+          <select value={importance} onChange={(e) => setImportance(Number(e.target.value) as Importance)} style={{ width: '100%' }}>
+            {([1,2,3,4] as Importance[]).map((v) => (
+              <option key={v} value={v}>{IMP_LABELS[v]} — {['','Low','Med','High','Crit'][v]}</option>
             ))}
           </select>
         </div>
-        <div>
-          <label className="block text-xs mb-0.5">Cog Load</label>
-          <select
-            className="border border-gray-300 rounded px-2 py-1 text-sm"
-            value={cogLoad}
-            onChange={(e) => setCogLoad(Number(e.target.value) as CogLoad)}
-          >
-            {([1, 2, 3] as CogLoad[]).map((v) => (
-              <option key={v} value={v}>{CL_LABELS[v]}</option>
+        <div style={{ flex: '1 1 100px' }}>
+          <label style={fieldLabel}>Cog Load</label>
+          <select value={cogLoad} onChange={(e) => setCogLoad(Number(e.target.value) as CogLoad)} style={{ width: '100%' }}>
+            {([1,2,3] as CogLoad[]).map((v) => (
+              <option key={v} value={v}>{CL_LABELS[v]} — {['','Light','Mod','Heavy'][v]}</option>
             ))}
           </select>
         </div>
       </div>
-      {!compact && (
-        <div className="flex gap-2 flex-wrap">
-          <div className="flex-1 min-w-32">
-            <label className="block text-xs mb-0.5">Deadline (optional)</label>
-            <input
-              type="datetime-local"
-              className="border border-gray-300 rounded px-2 py-1 w-full text-sm"
-              value={deadline}
-              onChange={(e) => setDeadline(e.target.value)}
-            />
-          </div>
-          <div className="flex-1 min-w-32">
-            <label className="block text-xs mb-0.5">Category (optional)</label>
-            <input
-              className="border border-gray-300 rounded px-2 py-1 w-full text-sm"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              placeholder="e.g. Work"
-            />
-          </div>
+      {/* Row: deadline · category */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 160px' }}>
+          <label style={fieldLabel}>Deadline</label>
+          <input type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} style={{ width: '100%' }} />
         </div>
-      )}
+        <div style={{ flex: '1 1 120px' }}>
+          <label style={fieldLabel}>Category</label>
+          <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. work" style={{ width: '100%' }} />
+        </div>
+      </div>
+      {/* Must-Do dependency */}
       {siblingOptions.length > 0 && (
         <div>
-          <label className="block text-xs mb-0.5">Must-Do after (sibling)</label>
-          <select
-            className="border border-gray-300 rounded px-2 py-1 text-sm"
-            value={dependsOnId}
-            onChange={(e) => setDependsOnId(e.target.value)}
-          >
+          <label style={fieldLabel}>Must-Do after</label>
+          <select value={dependsOnId} onChange={(e) => setDependsOnId(e.target.value)} style={{ width: '100%' }}>
             <option value="">— none —</option>
-            {siblingOptions.map((t) => (
-              <option key={t.id} value={t.id}>{t.title}</option>
-            ))}
+            {siblingOptions.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
           </select>
         </div>
       )}
-      <div className="flex gap-2">
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: 8 }}>
         <button
           type="submit"
           disabled={submitting || !title.trim()}
-          className="bg-blue-600 text-white rounded px-3 py-1 text-sm disabled:opacity-50"
+          style={{
+            flex: 1,
+            padding: '8px 16px',
+            borderRadius: 'var(--r)',
+            background: 'var(--accent)',
+            color: 'var(--accent-text)',
+            border: 'none',
+            cursor: submitting || !title.trim() ? 'default' : 'pointer',
+            opacity: submitting || !title.trim() ? 0.5 : 1,
+            fontSize: 13,
+            fontWeight: 600,
+            minHeight: 44,
+            letterSpacing: '0.03em',
+          }}
         >
-          {submitting ? 'Adding…' : compact ? 'Add Subtask' : 'Add Task'}
+          {submitting ? 'Adding…' : 'Add Task'}
         </button>
         {onCancel && (
-          <button type="button" onClick={onCancel} className="text-sm text-gray-500 underline">
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              padding: '8px 16px',
+              borderRadius: 'var(--r)',
+              background: 'transparent',
+              border: '1px solid var(--border-2)',
+              color: 'var(--t2)',
+              cursor: 'pointer',
+              fontSize: 13,
+              minHeight: 44,
+            }}
+          >
             Cancel
           </button>
         )}
@@ -177,6 +285,8 @@ function AddTaskForm({ parentId, tasks, onAdd, onCancel, compact = false }: AddT
     </form>
   );
 }
+
+/* ─── TaskRow ─── */
 
 interface TaskRowProps {
   task: Task;
@@ -206,86 +316,177 @@ function TaskRow({
     .sort((a, b) => (scoredById.get(b.id)?.score ?? 0) - (scoredById.get(a.id)?.score ?? 0));
 
   const canAddSubtask = depth < 2;
-  const indent = depth * 20;
 
   const handleSetDep = async (val: string) => {
     setDepError('');
     const err = await onSetDep(task.id, val);
-    // onSetDep already shows error in parent; keep local too
     if (typeof err === 'string') setDepError(err);
   };
 
-  // Dependency options: siblings only (same parentId)
   const siblingDepOptions = tasks.filter(
     (t) => t.id !== task.id && t.parentId === task.parentId
   );
 
+  const effortDisplay = effectiveEffortMin(task, tasks);
+
+  // Card visual state
+  const borderColor = isOverdue
+    ? 'var(--error)'
+    : isAtRisk
+    ? 'var(--warn)'
+    : isBlocked
+    ? 'var(--border-2)'
+    : 'var(--border)';
+
+  const cardBg = isOverdue
+    ? 'rgba(192,48,48,0.04)'
+    : isAtRisk
+    ? 'rgba(212,98,40,0.04)'
+    : 'var(--bg-1)';
+
   return (
-    <li>
+    <li style={{ listStyle: 'none' }}>
       <div
-        className={`border rounded p-3 flex items-start gap-3 ${
-          isBlocked ? 'border-gray-200 opacity-50' : 'border-gray-200'
-        } ${isOverdue ? 'border-red-200 bg-red-50/30' : ''}`}
-        style={{ marginLeft: indent }}
+        style={{
+          background: cardBg,
+          border: '1px solid var(--border)',
+          borderLeft: `3px solid ${borderColor}`,
+          borderRadius: 'var(--r-md)',
+          padding: depth > 0 ? '8px 10px' : '10px 12px',
+          opacity: isBlocked ? 0.5 : 1,
+          marginLeft: depth > 0 ? 16 : 0,
+        }}
       >
-        <input
-          type="checkbox"
-          className="mt-1 w-4 h-4 cursor-pointer flex-shrink-0"
-          checked={false}
-          onChange={() => onDone(task.id)}
-          disabled={isBlocked}
-        />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            {depth > 0 && (
-              <span className="text-xs text-gray-400">{'└'.repeat(1)}</span>
-            )}
-            <span className={`font-medium ${depth > 0 ? 'text-sm' : ''}`}>{task.title}</span>
-            {isBlocked && (
-              <span className="text-xs bg-gray-200 text-gray-600 px-1 rounded">BLOCKED</span>
-            )}
-            {isOverdue && !isBlocked && (
-              <span className="text-xs bg-red-100 text-red-700 px-1 rounded">OVERDUE</span>
-            )}
-            {isAtRisk && !isOverdue && !isBlocked && (
-              <span className="text-xs bg-orange-100 text-orange-700 px-1 rounded">AT RISK</span>
-            )}
-          </div>
-          <div className="text-xs text-gray-500 mt-1 space-x-2 flex flex-wrap gap-y-0.5">
-            <span>score: <strong>{score.toFixed(2)}</strong></span>
-            <span>effort: {effectiveEffortMin(task, tasks)}m</span>
-            <span>imp: {task.importance}</span>
-            <span>cog: {task.cogLoad}</span>
-            {task.category && <span>#{task.category}</span>}
-            {task.deadline && <span>due: {new Date(task.deadline).toLocaleString()}</span>}
-            {isBlocked && blockedBy && <span className="text-gray-400">waiting on: {blockedBy}</span>}
-          </div>
+        {/* Row 1: checkbox + title + score badge */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={false}
+            onChange={() => onDone(task.id)}
+            disabled={isBlocked}
+            style={{ marginTop: 2 }}
+          />
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: depth > 0 ? 13 : 14,
+              fontWeight: 500,
+              color: 'var(--t1)',
+              lineHeight: 1.4,
+              wordBreak: 'break-word',
+            }}
+          >
+            {task.title}
+          </span>
+          <span
+            className="tabular-nums"
+            style={{
+              fontSize: 11,
+              color: scoreBadgeColor(score),
+              background: 'var(--bg-2)',
+              border: '1px solid var(--border-2)',
+              borderRadius: 'var(--r)',
+              padding: '1px 5px',
+              flexShrink: 0,
+              fontWeight: 600,
+              letterSpacing: '0.02em',
+            }}
+          >
+            {score.toFixed(2)}
+          </span>
+        </div>
+
+        {/* Row 2: metadata + status badges */}
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: '4px 8px',
+            marginTop: 5,
+            marginLeft: 24,
+            fontSize: 11,
+            color: 'var(--t2)',
+          }}
+        >
+          <span>{effortDisplay}m</span>
+          <span style={{ color: 'var(--border-2)' }}>·</span>
+          <span>★{task.importance}</span>
+          <span style={{ color: 'var(--border-2)' }}>·</span>
+          <span>⚡{task.cogLoad}</span>
+          {task.category && (
+            <>
+              <span style={{ color: 'var(--border-2)' }}>·</span>
+              <span style={{ color: 'var(--accent)' }}>#{task.category}</span>
+            </>
+          )}
+          {task.deadline && (
+            <>
+              <span style={{ color: 'var(--border-2)' }}>·</span>
+              <span>→ {fmtDeadline(task.deadline)}</span>
+            </>
+          )}
+          {isBlocked && blockedBy && (
+            <>
+              <span style={{ color: 'var(--border-2)' }}>·</span>
+              <span style={{ color: 'var(--t3)' }}>after: {blockedBy}</span>
+            </>
+          )}
+          {isBlocked && (
+            <Label style={{ borderColor: 'var(--border-2)', color: 'var(--t3)' }}>blocked</Label>
+          )}
+          {isOverdue && !isBlocked && (
+            <Label style={{ borderColor: 'var(--error)', color: 'var(--error)' }}>overdue</Label>
+          )}
+          {isAtRisk && !isOverdue && !isBlocked && (
+            <Label style={{ borderColor: 'var(--warn)', color: 'var(--warn)' }}>at risk</Label>
+          )}
+        </div>
+
+        {/* Row 3: timer */}
+        <div style={{ marginLeft: 24 }}>
           <TaskTimer taskId={task.id} isDone={task.status === 'done'} />
-          {siblingDepOptions.length > 0 && (
-            <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
-              <label>Must-Do after:</label>
-              <select
-                className="border border-gray-300 rounded px-1 py-0.5"
-                value={task.dependsOnId ?? ''}
-                onChange={(e) => handleSetDep(e.target.value)}
-              >
-                <option value="">— none —</option>
-                {siblingDepOptions.map((o) => (
-                  <option key={o.id} value={o.id}>{o.title}</option>
-                ))}
-              </select>
-              {depError && <span className="text-red-600">{depError}</span>}
-            </div>
-          )}
-          {canAddSubtask && !showSubtaskForm && (
-            <button
-              className="mt-1 text-xs text-blue-500 hover:underline"
-              onClick={() => setShowSubtaskForm(true)}
+        </div>
+
+        {/* Dependency selector */}
+        {siblingDepOptions.length > 0 && (
+          <div style={{ marginTop: 6, marginLeft: 24, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 11, color: 'var(--t3)' }}>after:</span>
+            <select
+              value={task.dependsOnId ?? ''}
+              onChange={(e) => handleSetDep(e.target.value)}
+              style={{ fontSize: 11, padding: '2px 4px', width: 'auto' }}
             >
-              + subtask
-            </button>
-          )}
-          {showSubtaskForm && (
+              <option value="">— none —</option>
+              {siblingDepOptions.map((o) => (
+                <option key={o.id} value={o.id}>{o.title}</option>
+              ))}
+            </select>
+            {depError && <span style={{ fontSize: 11, color: 'var(--error)' }}>{depError}</span>}
+          </div>
+        )}
+
+        {/* Subtask form toggle */}
+        {canAddSubtask && !showSubtaskForm && (
+          <button
+            onClick={() => setShowSubtaskForm(true)}
+            style={{
+              marginTop: 6,
+              marginLeft: 24,
+              fontSize: 11,
+              color: 'var(--t3)',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: 0,
+            }}
+          >
+            + subtask
+          </button>
+        )}
+        {showSubtaskForm && (
+          <div style={{ marginLeft: 24 }}>
             <AddTaskForm
               parentId={task.id}
               tasks={tasks}
@@ -293,11 +494,13 @@ function TaskRow({
               onCancel={() => setShowSubtaskForm(false)}
               compact
             />
-          )}
-        </div>
+          </div>
+        )}
       </div>
+
+      {/* Child tasks */}
       {children.length > 0 && (
-        <ul className="space-y-1 mt-1">
+        <ul style={{ margin: '4px 0 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {children.map((child) => {
             const cs = scoredById.get(child.id);
             const childBlocked = isChildBlocked(child, tasks);
@@ -333,46 +536,44 @@ function isChildBlocked(task: Task, allTasks: Task[]): boolean {
   return !!dep && dep.status !== 'done';
 }
 
+/* ─── Home ─── */
+
 export default function Home() {
   const { tasks, loading, loadTasks, addTask, markDone, markOpen, setDependency } = useTaskStore();
   const { activeCategories, toggleCategory, clearFilter } = useFilterStore();
-  const [depError, setDepError] = useState('');
+  const [depError, setDepError]         = useState('');
+  const [showAddForm, setShowAddForm]   = useState(false);
+  const [showPomodoro, setShowPomodoro] = useState(false);
+  const [showDone, setShowDone]         = useState(false);
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
 
   const now = new Date();
 
-  // Score all open tasks — substitute effective effort before ranking
   const openTasks = tasks.filter((t) => t.status !== 'done');
-  const scorable = openTasks.map((t) => ({ ...t, effortMin: effectiveEffortMin(t, tasks) }));
-  const ranked = rankTasks(scorable, now);
+  const scorable  = openTasks.map((t) => ({ ...t, effortMin: effectiveEffortMin(t, tasks) }));
+  const ranked    = rankTasks(scorable, now);
   const scoredById = new Map(
     ranked.map(({ task, score, isAtRisk, isOverdue }) => [task.id, { score, isAtRisk, isOverdue }])
   );
 
-  // Helper: display score for a subtree rooted at taskId
   const displayScore = (taskId: string): number => {
     const own = scoredById.get(taskId)?.score ?? 0;
     const children = tasks.filter((t) => t.parentId === taskId && t.status !== 'done');
     if (children.length === 0) return own;
     return Math.max(own, ...children.flatMap((c) => {
       const cScore = scoredById.get(c.id)?.score ?? 0;
-      const grandchildren = tasks.filter((t) => t.parentId === c.id && t.status !== 'done');
-      return [cScore, ...grandchildren.map((g) => scoredById.get(g.id)?.score ?? 0)];
+      const gc = tasks.filter((t) => t.parentId === c.id && t.status !== 'done');
+      return [cScore, ...gc.map((g) => scoredById.get(g.id)?.score ?? 0)];
     }));
   };
 
-  // A top-level task is visible when the filter is empty, or when it or any
-  // descendant has a category in the active set.
   function taskMatchesFilter(task: Task): boolean {
     if (activeCategories.length === 0) return true;
     if (task.category && activeCategories.includes(task.category)) return true;
     return tasks.some(
-      (t) =>
-        t.status !== 'done' &&
-        t.parentId === task.id &&
-        t.category != null &&
-        activeCategories.includes(t.category)
+      (t) => t.status !== 'done' && t.parentId === task.id &&
+             t.category != null && activeCategories.includes(t.category)
     );
   }
 
@@ -390,36 +591,143 @@ export default function Home() {
     if (err) setDepError(err);
   };
 
+  const sectionLabel: React.CSSProperties = {
+    fontFamily: 'var(--ff-syne, sans-serif)',
+    fontWeight: 700,
+    fontSize: 11,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: 'var(--t2)',
+  };
+
   return (
-    <div className="max-w-2xl mx-auto p-4 font-mono">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">FocusFlow</h1>
-        <a href="/workblocks" className="text-sm text-blue-500 hover:underline">Workblocks →</a>
-      </div>
+    <div style={{ background: 'var(--bg)', minHeight: '100dvh' }}>
 
-      <AddTaskForm tasks={tasks} onAdd={addTask} />
+      {/* ── Sticky page header ── */}
+      <header
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 40,
+          background: 'var(--bg-1)',
+          borderBottom: '1px solid var(--border)',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 640,
+            margin: '0 auto',
+            padding: '10px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
+        >
+          <div>
+            <h1
+              style={{
+                fontFamily: 'var(--ff-syne, sans-serif)',
+                fontWeight: 800,
+                fontSize: 18,
+                letterSpacing: '-0.02em',
+                color: 'var(--t1)',
+                lineHeight: 1,
+              }}
+            >
+              Tasks
+            </h1>
+            <p style={{ fontSize: 11, color: 'var(--t2)', marginTop: 2 }}>
+              {loading ? 'loading…' : `${topLevelOpen.length} open${activeCategories.length > 0 ? ' · filtered' : ''}`}
+            </p>
+          </div>
+          <button
+            onClick={() => setShowAddForm((v) => !v)}
+            style={{
+              padding: '8px 14px',
+              borderRadius: 'var(--r)',
+              background: showAddForm ? 'var(--bg-3)' : 'var(--accent)',
+              color: showAddForm ? 'var(--t1)' : 'var(--accent-text)',
+              border: showAddForm ? '1px solid var(--border-2)' : 'none',
+              cursor: 'pointer',
+              fontSize: 13,
+              fontWeight: 600,
+              minHeight: 44,
+              minWidth: 44,
+              letterSpacing: '0.02em',
+            }}
+          >
+            {showAddForm ? '× close' : '+ add'}
+          </button>
+        </div>
+      </header>
 
-      {depError && (
-        <div className="mb-4 border border-red-300 bg-red-50 text-red-700 text-sm rounded px-3 py-2">
-          {depError}
+      {/* ── Add task form (collapsible) ── */}
+      {showAddForm && (
+        <div
+          style={{
+            borderBottom: '1px solid var(--border)',
+            background: 'var(--bg-1)',
+          }}
+        >
+          <div style={{ maxWidth: 640, margin: '0 auto', padding: '16px' }}>
+            <AddTaskForm
+              tasks={tasks}
+              onAdd={addTask}
+              onCancel={() => setShowAddForm(false)}
+            />
+          </div>
         </div>
       )}
 
+      {/* ── Dep error ── */}
+      {depError && (
+        <div style={{ maxWidth: 640, margin: '0 auto', padding: '8px 16px 0' }}>
+          <div
+            style={{
+              fontSize: 12,
+              color: 'var(--error)',
+              background: 'rgba(192,48,48,0.08)',
+              border: '1px solid var(--error)',
+              borderRadius: 'var(--r)',
+              padding: '6px 10px',
+            }}
+          >
+            {depError}
+          </div>
+        </div>
+      )}
+
+      {/* ── Category filter bar ── */}
       {allCategories.length > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <span className="text-xs text-gray-500">Filter:</span>
+        <div
+          style={{
+            borderBottom: '1px solid var(--border)',
+            padding: '8px 16px',
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: '6px 8px',
+          }}
+        >
+          <span style={{ ...sectionLabel, fontSize: 10 }}>filter</span>
           {allCategories.map((cat) => {
             const active = activeCategories.includes(cat);
             return (
               <button
                 key={cat}
-                type="button"
                 onClick={() => toggleCategory(cat)}
-                className={`px-2 py-0.5 rounded text-xs border ${
-                  active
-                    ? 'bg-indigo-600 text-white border-indigo-600'
-                    : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'
-                }`}
+                style={{
+                  fontSize: 11,
+                  padding: '3px 8px',
+                  borderRadius: 'var(--r)',
+                  border: '1px solid',
+                  borderColor: active ? 'var(--accent)' : 'var(--border-2)',
+                  background: active ? 'var(--accent-dim)' : 'transparent',
+                  color: active ? 'var(--accent)' : 'var(--t2)',
+                  cursor: 'pointer',
+                  minHeight: 28,
+                }}
               >
                 #{cat}
               </button>
@@ -427,9 +735,11 @@ export default function Home() {
           })}
           {activeCategories.length > 0 && (
             <button
-              type="button"
               onClick={clearFilter}
-              className="text-xs text-gray-400 hover:text-gray-600 underline"
+              style={{
+                fontSize: 11, color: 'var(--t3)', background: 'none',
+                border: 'none', cursor: 'pointer', textDecoration: 'underline',
+              }}
             >
               clear
             </button>
@@ -437,15 +747,27 @@ export default function Home() {
         </div>
       )}
 
-      <section>
-        <h2 className="font-semibold text-lg mb-3">
-          Open Tasks ({topLevelOpen.length}{activeCategories.length > 0 ? ' filtered' : ''})
-        </h2>
-        {loading && <p className="text-gray-500">Loading…</p>}
-        {!loading && topLevelOpen.length === 0 && (
-          <p className="text-gray-500">No tasks yet. Add one above.</p>
+      {/* ── Main content ── */}
+      <main style={{ maxWidth: 640, margin: '0 auto', padding: '12px 16px 24px' }}>
+
+        {/* Open task list */}
+        {loading && (
+          <p style={{ color: 'var(--t3)', fontSize: 13, padding: '24px 0' }}>Loading…</p>
         )}
-        <ul className="space-y-2">
+        {!loading && topLevelOpen.length === 0 && (
+          <div
+            style={{
+              textAlign: 'center',
+              padding: '48px 0',
+              color: 'var(--t3)',
+              fontSize: 13,
+            }}
+          >
+            <p>No tasks. Tap <strong style={{ color: 'var(--t2)' }}>+ add</strong> to start.</p>
+          </div>
+        )}
+
+        <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
           {topLevelOpen.map((task) => {
             const s = scoredById.get(task.id);
             const blocked = isChildBlocked(task, tasks);
@@ -470,28 +792,87 @@ export default function Home() {
             );
           })}
         </ul>
-      </section>
 
-      {doneTasks.length > 0 && (
-        <section className="mt-8">
-          <h2 className="font-semibold text-lg mb-3 text-gray-400">
-            Done ({doneTasks.length})
-          </h2>
-          <ul className="space-y-1">
-            {doneTasks.map((task) => (
-              <li key={task.id} className="flex items-center gap-2 text-gray-400">
-                <input
-                  type="checkbox"
-                  className="w-4 h-4 cursor-pointer"
-                  checked
-                  onChange={() => markOpen(task.id)}
-                />
-                <span className="line-through text-sm">{task.title}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+        {/* ── Pomodoro timer (collapsible) ── */}
+        <div style={{ marginTop: 24 }}>
+          <button
+            onClick={() => setShowPomodoro((v) => !v)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '6px 0',
+              color: 'var(--t2)',
+              width: '100%',
+              textAlign: 'left',
+            }}
+          >
+            <span style={{ ...sectionLabel }}>Pomodoro</span>
+            <span style={{ fontSize: 10, color: 'var(--t3)' }}>{showPomodoro ? '▲' : '▼'}</span>
+          </button>
+          {showPomodoro && (
+            <div style={{ marginTop: 8 }}>
+              <PomodoroTimer />
+            </div>
+          )}
+        </div>
+
+        {/* ── Done tasks (collapsible) ── */}
+        {doneTasks.length > 0 && (
+          <div style={{ marginTop: 24 }}>
+            <button
+              onClick={() => setShowDone((v) => !v)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '6px 0',
+                color: 'var(--t2)',
+                width: '100%',
+                textAlign: 'left',
+              }}
+            >
+              <span style={{ ...sectionLabel }}>Done ({doneTasks.length})</span>
+              <span style={{ fontSize: 10, color: 'var(--t3)' }}>{showDone ? '▲' : '▼'}</span>
+            </button>
+            {showDone && (
+              <ul
+                style={{
+                  listStyle: 'none',
+                  padding: 0,
+                  margin: '8px 0 0 0',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 2,
+                }}
+              >
+                {doneTasks.map((task) => (
+                  <li
+                    key={task.id}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked
+                      onChange={() => markOpen(task.id)}
+                    />
+                    <span className="task-done-text" style={{ fontSize: 13 }}>
+                      {task.title}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+      </main>
     </div>
   );
 }

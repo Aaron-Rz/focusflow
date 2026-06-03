@@ -1,26 +1,157 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
+/* ─── Font family tokens (populated by next/font via HTML className) ─── */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-display: var(--ff-syne), sans-serif;
+  --font-body:    var(--ff-inconsolata), monospace;
+  --font-mono:    var(--ff-inconsolata), monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ─── Theme tokens — dark is default ─── */
+:root {
+  --bg:       #0d0d0d;
+  --bg-1:     #131313;
+  --bg-2:     #1c1c1c;
+  --bg-3:     #262626;
+  --border:   #252525;
+  --border-2: #333333;
+
+  --t1: #ece8e0;
+  --t2: #6e6b66;
+  --t3: #3a3734;
+
+  --accent:       #c9a227;
+  --accent-dim:   rgba(201, 162, 39, 0.15);
+  --accent-text:  #0d0d0d;
+
+  --warn:  #d46228;
+  --error: #c03030;
+  --ok:    #3d8a50;
+
+  --r:    3px;
+  --r-md: 5px;
+  --r-lg: 8px;
+
+  --nav-h: 56px;
+  --sidebar-w: 52px;
+}
+
+[data-theme="light"] {
+  --bg:       #f0ece5;
+  --bg-1:     #e6e2db;
+  --bg-2:     #dcd8d1;
+  --bg-3:     #d2cec7;
+  --border:   #c0bbb2;
+  --border-2: #a8a39a;
+
+  --t1: #181512;
+  --t2: #625e58;
+  --t3: #9c9890;
+
+  --accent:       #9a7a18;
+  --accent-dim:   rgba(154, 122, 24, 0.12);
+  --accent-text:  #f0ece5;
+}
+
+/* ─── Smooth theme transition ─── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  transition:
+    background-color 150ms ease,
+    border-color     150ms ease,
+    color            150ms ease,
+    fill             150ms ease;
+}
+
+/* Don't transition transforms / opacity — it breaks animations */
+.no-tr,
+.no-tr * {
+  transition: none !important;
+}
+
+/* ─── Base ─── */
+html {
+  font-size: 14px;
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--t1);
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100dvh;
+  background: var(--bg);
+  font-family: var(--ff-inconsolata, monospace);
+  /* bottom padding for mobile nav */
+  padding-bottom: var(--nav-h);
+}
+
+@media (min-width: 768px) {
+  body {
+    padding-bottom: 0;
+    padding-left: var(--sidebar-w);
+  }
+}
+
+/* ─── Form elements ─── */
+input,
+select,
+textarea,
+button {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+input[type="text"],
+input[type="number"],
+input[type="datetime-local"],
+select {
+  background: var(--bg-2);
+  color: var(--t1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r);
+  padding: 6px 8px;
+  outline: none;
+  width: 100%;
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus,
+input[type="datetime-local"]:focus,
+select:focus {
+  border-color: var(--accent);
+}
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* ─── Scrollbar (desktop, webkit) ─── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 2px; }
+
+/* ─── Utility: visually-hidden (a11y) ─── */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ─── Task card done-state animation ─── */
+.task-done-text {
+  text-decoration: line-through;
+  opacity: 0.45;
+  transition: opacity 200ms ease, text-decoration 200ms ease;
 }
