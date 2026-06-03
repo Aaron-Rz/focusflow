@@ -17,10 +17,10 @@ export const metadata: Metadata = {
   title: "FocusFlow",
   description: "Personal task prioritization and time management",
   manifest: "/manifest.json",
+  icons: { apple: "/icons/icon-192.png" },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "FocusFlow",
   },
 };
 
@@ -38,9 +38,6 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <head>
-        <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-      </head>
       <body className="min-h-full flex flex-col">
         <BackupReminderBanner />
         {children}

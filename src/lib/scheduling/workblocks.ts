@@ -177,8 +177,15 @@ export function fillWorkblock(
   const endDate = new Date(workblock.end);
   const blockMinutes = (endDate.getTime() - startDate.getTime()) / 60_000;
 
-  // Rank ready open tasks by score
-  const openTasks = allTasks.filter((t) => t.status !== 'done');
+  // Rank ready open tasks by score, optionally scoped to specific categories
+  const catFilter = workblock.categoryFilter;
+  const openTasks = allTasks.filter((t) => {
+    if (t.status === 'done') return false;
+    if (catFilter && catFilter.length > 0) {
+      return t.category != null && catFilter.includes(t.category);
+    }
+    return true;
+  });
   const scorable = openTasks
     .filter((t) => isReady(t.id, allTasks))
     .map((t) => ({ ...t, effortMin: effectiveEffortMin(t, allTasks) }));

@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { useTaskStore, getTaskDepth } from '@/stores/taskStore';
+import { useFilterStore } from '@/stores/filterStore';
 import { rankTasks } from '@/lib/algorithm/score';
 import { effectiveEffortMin } from '@/lib/algorithm/dependencies';
+import { getDistinctCategories } from '@/lib/utils/categories';
 import type { Importance, CogLoad, Task } from '@/types';
 import { TaskTimer } from '@/components/TaskTimer';
 
@@ -333,6 +335,7 @@ function isChildBlocked(task: Task, allTasks: Task[]): boolean {
 
 export default function Home() {
   const { tasks, loading, loadTasks, addTask, markDone, markOpen, setDependency } = useTaskStore();
+  const { activeCategories, toggleCategory, clearFilter } = useFilterStore();
   const [depError, setDepError] = useState('');
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
@@ -359,8 +362,24 @@ export default function Home() {
     }));
   };
 
+  // A top-level task is visible when the filter is empty, or when it or any
+  // descendant has a category in the active set.
+  function taskMatchesFilter(task: Task): boolean {
+    if (activeCategories.length === 0) return true;
+    if (task.category && activeCategories.includes(task.category)) return true;
+    return tasks.some(
+      (t) =>
+        t.status !== 'done' &&
+        t.parentId === task.id &&
+        t.category != null &&
+        activeCategories.includes(t.category)
+    );
+  }
+
+  const allCategories = getDistinctCategories(tasks);
+
   const topLevelOpen = openTasks
-    .filter((t) => !t.parentId)
+    .filter((t) => !t.parentId && taskMatchesFilter(t))
     .sort((a, b) => displayScore(b.id) - displayScore(a.id));
 
   const doneTasks = tasks.filter((t) => t.status === 'done' && !t.parentId);
@@ -386,9 +405,41 @@ export default function Home() {
         </div>
       )}
 
+      {allCategories.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-gray-500">Filter:</span>
+          {allCategories.map((cat) => {
+            const active = activeCategories.includes(cat);
+            return (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => toggleCategory(cat)}
+                className={`px-2 py-0.5 rounded text-xs border ${
+                  active
+                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'
+                }`}
+              >
+                #{cat}
+              </button>
+            );
+          })}
+          {activeCategories.length > 0 && (
+            <button
+              type="button"
+              onClick={clearFilter}
+              className="text-xs text-gray-400 hover:text-gray-600 underline"
+            >
+              clear
+            </button>
+          )}
+        </div>
+      )}
+
       <section>
         <h2 className="font-semibold text-lg mb-3">
-          Open Tasks ({topLevelOpen.length})
+          Open Tasks ({topLevelOpen.length}{activeCategories.length > 0 ? ' filtered' : ''})
         </h2>
         {loading && <p className="text-gray-500">Loading…</p>}
         {!loading && topLevelOpen.length === 0 && (

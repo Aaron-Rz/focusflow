@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { exportToJSON } from '@/lib/db/backup';
+import { downloadFile } from '@/lib/utils/download';
 
 const STORAGE_KEY = 'focusflow_last_backup_prompt';
 const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -24,13 +25,7 @@ export function BackupReminderBanner() {
 
   async function handleExport() {
     const json = await exportToJSON();
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `focusflow-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadFile(json, `focusflow-backup-${new Date().toISOString().slice(0, 10)}.json`, 'application/json');
     dismiss();
   }
 

@@ -5,6 +5,8 @@ import { useTaskStore } from '@/stores/taskStore';
 import { useWorkblockStore } from '@/stores/workblockStore';
 import { fillWorkblock, workblockToIcs } from '@/lib/scheduling/workblocks';
 import type { Workblock, ScheduleSegment, Task } from '@/types';
+import { downloadFile } from '@/lib/utils/download';
+import { getDistinctCategories } from '@/lib/utils/categories';
 
 function formatDuration(minutes: number): string {
   const h = Math.floor(minutes / 60);
@@ -20,16 +22,6 @@ function toLocalDatetimeValue(date: Date): string {
 
 function fmtTime(d: Date): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function downloadIcs(content: string, filename: string) {
-  const blob = new Blob([content], { type: 'text/calendar;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 function SegmentList({ segments, taskMap }: { segments: ScheduleSegment[]; taskMap: Map<string, Task> }) {
@@ -87,6 +79,7 @@ export default function WorkblocksPage() {
   const [pomodoroEnabled, setPomodoroEnabled] = useState(false);
   const [pomodoroWorkMin, setPomodoroWorkMin] = useState(25);
   const [pomodoroBreakMin, setPomodoroBreakMin] = useState(5);
+  const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -117,6 +110,7 @@ export default function WorkblocksPage() {
       start: startDate.toISOString(),
       end: endDate.toISOString(),
       onOverrun,
+      categoryFilter: categoryFilter.length > 0 ? categoryFilter : undefined,
       pomodoroEnabled,
       pomodoroWorkMin: pomodoroEnabled ? pomodoroWorkMin : undefined,
       pomodoroBreakMin: pomodoroEnabled ? pomodoroBreakMin : undefined,
@@ -178,6 +172,54 @@ export default function WorkblocksPage() {
             <option value="extendBlock">Extend block until task finishes</option>
           </select>
         </div>
+
+        {/* Category filter */}
+        {(() => {
+          const cats = getDistinctCategories(tasks);
+          if (cats.length === 0) return null;
+          return (
+            <div>
+              <label className="block text-xs mb-1">Include only these categories (leave empty for all)</label>
+              <div className="flex flex-wrap gap-1.5">
+                {cats.map((cat) => {
+                  const active = categoryFilter.includes(cat);
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() =>
+                        setCategoryFilter(
+                          active ? categoryFilter.filter((c) => c !== cat) : [...categoryFilter, cat]
+                        )
+                      }
+                      className={`px-2 py-0.5 rounded text-xs border ${
+                        active
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'
+                      }`}
+                    >
+                      #{cat}
+                    </button>
+                  );
+                })}
+                {categoryFilter.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setCategoryFilter([])}
+                    className="px-2 py-0.5 rounded text-xs text-gray-400 hover:text-gray-600 underline"
+                  >
+                    clear
+                  </button>
+                )}
+              </div>
+              {categoryFilter.length > 0 && (
+                <p className="text-xs text-indigo-600 mt-1">
+                  Only tasks in: {categoryFilter.map((c) => `#${c}`).join(', ')}
+                </p>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Pomodoro settings */}
         <div className="border border-gray-200 rounded p-3 space-y-2 bg-gray-50">
@@ -258,6 +300,12 @@ export default function WorkblocksPage() {
                       <span>{formatDuration(blockMin)} block</span>
                       <span>·</span>
                       <span>{wb.onOverrun === 'abortTask' ? 'abort on overrun' : 'extend on overrun'}</span>
+                      {wb.categoryFilter && wb.categoryFilter.length > 0 && (
+                        <>
+                          <span>·</span>
+                          <span>{wb.categoryFilter.map((c) => `#${c}`).join(' ')}</span>
+                        </>
+                      )}
                       {wb.pomodoroEnabled && (
                         <>
                           <span>·</span>
@@ -280,7 +328,7 @@ export default function WorkblocksPage() {
                     <button
                       onClick={() => {
                         const ics = workblockToIcs(filled, taskMap);
-                        downloadIcs(ics, `workblock-${wb.id.slice(0, 8)}.ics`);
+                        downloadFile(ics, `workblock-${wb.id.slice(0, 8)}.ics`, 'text/calendar;charset=utf-8');
                       }}
                       className="text-xs bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded px-2 py-1"
                     >

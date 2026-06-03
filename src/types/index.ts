@@ -23,6 +23,7 @@ export interface Workblock {
   end: string;
   onOverrun: 'abortTask' | 'extendBlock';
   taskIds: string[];
+  categoryFilter?: string[];  // when non-empty, only tasks with matching category are eligible
   pomodoroEnabled?: boolean;
   pomodoroWorkMin?: number;
   pomodoroBreakMin?: number;
