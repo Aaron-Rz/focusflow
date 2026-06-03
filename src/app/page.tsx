@@ -250,7 +250,7 @@ function TaskRow({
           </div>
           <div className="text-xs text-gray-500 mt-1 space-x-2 flex flex-wrap gap-y-0.5">
             <span>score: <strong>{score.toFixed(2)}</strong></span>
-            <span>effort: {task.effortMin}m</span>
+            <span>effort: {effectiveEffortMin(task, tasks)}m</span>
             <span>imp: {task.importance}</span>
             <span>cog: {task.cogLoad}</span>
             {task.category && <span>#{task.category}</span>}
