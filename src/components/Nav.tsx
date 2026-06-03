@@ -13,7 +13,7 @@ export function Nav() {
   const pathname = usePathname();
   const { theme, toggleTheme } = useTheme();
 
-  const themeIcon = theme === 'dark' ? '◑' : '◐';
+  const themeIcon = theme === 'dark' ? '☀︎' : '☾';
   const themeLabel = theme === 'dark' ? 'Light mode' : 'Dark mode';
 
   return (
@@ -53,7 +53,7 @@ export function Nav() {
           title={themeLabel}
           aria-label={themeLabel}
           className="flex-1 flex flex-col items-center justify-center gap-0.5 min-h-[44px] min-w-[44px]"
-          style={{ color: 'var(--t2)', background: 'none', border: 'none', cursor: 'pointer' }}
+          style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}
         >
           <span style={{ fontSize: 18, lineHeight: 1 }}>{themeIcon}</span>
           <span style={{ fontSize: 10, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
@@ -112,11 +112,11 @@ export function Nav() {
           aria-label={themeLabel}
           className="flex items-center justify-center rounded-[var(--r-md)] w-10 h-10"
           style={{
-            color: 'var(--t3)',
-            background: 'none',
+            color: 'var(--accent)',
+            background: 'var(--accent-dim)',
             border: 'none',
             cursor: 'pointer',
-            fontSize: 18,
+            fontSize: 16,
           }}
         >
           {themeIcon}
