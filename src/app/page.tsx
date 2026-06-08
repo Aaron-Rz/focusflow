@@ -593,7 +593,7 @@ export default function Home() {
   };
 
   const sectionLabel: React.CSSProperties = {
-    fontFamily: 'var(--ff-syne, sans-serif)',
+    fontFamily: 'var(--ff-dm-sans, sans-serif)',
     fontWeight: 700,
     fontSize: 11,
     letterSpacing: '0.08em',
@@ -628,7 +628,7 @@ export default function Home() {
           <div>
             <h1
               style={{
-                fontFamily: 'var(--ff-syne, sans-serif)',
+                fontFamily: 'var(--ff-dm-sans, sans-serif)',
                 fontWeight: 800,
                 fontSize: 18,
                 letterSpacing: '-0.02em',

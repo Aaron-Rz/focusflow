@@ -118,7 +118,7 @@ export function PomodoroTimer() {
         <div className="flex items-center gap-2">
           <span
             style={{
-              fontFamily: 'var(--ff-syne, sans-serif)',
+              fontFamily: 'var(--ff-dm-sans, sans-serif)',
               fontWeight: 700,
               fontSize: 13,
               letterSpacing: '0.05em',
@@ -179,7 +179,7 @@ export function PomodoroTimer() {
       <div
         className="text-center tabular-nums my-4"
         style={{
-          fontFamily: 'var(--ff-inconsolata, monospace)',
+          fontFamily: 'var(--ff-dm-sans, sans-serif)',
           fontSize: 48,
           fontWeight: 300,
           lineHeight: 1,

@@ -2,9 +2,9 @@
 
 /* ─── Font family tokens (populated by next/font via HTML className) ─── */
 @theme inline {
-  --font-display: var(--ff-syne), sans-serif;
-  --font-body:    var(--ff-inconsolata), monospace;
-  --font-mono:    var(--ff-inconsolata), monospace;
+  --font-display: var(--ff-dm-sans), sans-serif;
+  --font-body:    var(--ff-dm-sans), sans-serif;
+  --font-mono:    ui-monospace, monospace;
 }
 
 /* ─── Theme tokens — dark is default ─── */
@@ -84,7 +84,7 @@ html {
 body {
   min-height: 100dvh;
   background: var(--bg);
-  font-family: var(--ff-inconsolata, monospace);
+  font-family: var(--ff-dm-sans, sans-serif);
   /* bottom padding for mobile nav */
   padding-bottom: var(--nav-h);
 }

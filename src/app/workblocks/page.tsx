@@ -34,7 +34,7 @@ function fmtDate(iso: string): string {
 }
 
 const sectionLabel: React.CSSProperties = {
-  fontFamily: 'var(--ff-syne, sans-serif)',
+  fontFamily: 'var(--ff-dm-sans, sans-serif)',
   fontWeight: 700,
   fontSize: 11,
   letterSpacing: '0.08em',
@@ -207,7 +207,7 @@ export default function WorkblocksPage() {
           <div>
             <h1
               style={{
-                fontFamily: 'var(--ff-syne, sans-serif)',
+                fontFamily: 'var(--ff-dm-sans, sans-serif)',
                 fontWeight: 800, fontSize: 18,
                 letterSpacing: '-0.02em', color: 'var(--t1)', lineHeight: 1,
               }}

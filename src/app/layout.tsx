@@ -1,21 +1,14 @@
 import type { Metadata, Viewport } from 'next';
-import { Syne, Inconsolata } from 'next/font/google';
+import { DM_Sans } from 'next/font/google';
 import './globals.css';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { Nav } from '@/components/Nav';
 import { BackupReminderBanner } from '@/components/BackupReminderBanner';
 
-const syne = Syne({
+const dmSans = DM_Sans({
   subsets: ['latin'],
-  variable: '--ff-syne',
-  weight: ['400', '600', '700', '800'],
-  display: 'swap',
-});
-
-const inconsolata = Inconsolata({
-  subsets: ['latin'],
-  variable: '--ff-inconsolata',
-  weight: ['300', '400', '500', '600'],
+  variable: '--ff-dm-sans',
+  weight: ['300', '400', '500', '600', '700'],
   display: 'swap',
 });
 
@@ -42,7 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       data-theme="dark"
-      className={`${syne.variable} ${inconsolata.variable}`}
+      className={dmSans.variable}
     >
       <head>
         {/* Set theme before paint to prevent flash */}

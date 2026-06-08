@@ -37,7 +37,7 @@ export function Nav() {
               className="flex-1 flex flex-col items-center justify-center gap-0.5 min-h-[44px]"
               style={{
                 color: active ? 'var(--accent)' : 'var(--t2)',
-                fontFamily: 'var(--ff-inconsolata, monospace)',
+                fontFamily: 'var(--ff-dm-sans, sans-serif)',
                 textDecoration: 'none',
               }}
             >
@@ -74,7 +74,7 @@ export function Nav() {
       >
         <div
           style={{
-            fontFamily: 'var(--ff-syne, sans-serif)',
+            fontFamily: 'var(--ff-dm-sans, sans-serif)',
             fontWeight: 800,
             fontSize: 16,
             color: 'var(--accent)',
