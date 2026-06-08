@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { db } from '@/lib/db/dexie';
-import type { Task, TimerSession } from '@/types';
+import type { Task, TimerSession, Habit } from '@/types';
 import {
   BarChart,
   Bar,
@@ -132,16 +132,19 @@ function ChartTooltip({ active, payload, label }: TooltipProps) {
 export default function AnalyticsPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [sessions, setSessions] = useState<TimerSession[]>([]);
+  const [habits, setHabits] = useState<Habit[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
-      const [t, s] = await Promise.all([
+      const [t, s, h] = await Promise.all([
         db.tasks.toArray(),
         db.timerSessions.toArray(),
+        db.habits.toArray(),
       ]);
       setTasks(t);
       setSessions(s);
+      setHabits(h);
       setLoading(false);
     }
     load();
@@ -263,36 +266,50 @@ export default function AnalyticsPage() {
   const consistencyStats = useMemo(() => {
     const today = startOfDay(new Date());
 
-    // build set of days with completions
+    // build set of days with task completions
     const doneTasks = tasks.filter((t) => t.status === 'done' && t.completedAt);
     const completionDays = new Set(
       doneTasks.map((t) => startOfDay(new Date(t.completedAt!)).getTime()),
     );
 
+    // habit completion days (per-day count from completionLog ISO date strings)
+    const habitCompletionsByDay: Map<number, number> = new Map();
+    for (const habit of habits) {
+      for (const dateStr of habit.completionLog) {
+        const dayTs = startOfDay(new Date(dateStr)).getTime();
+        habitCompletionsByDay.set(dayTs, (habitCompletionsByDay.get(dayTs) ?? 0) + 1);
+      }
+    }
+
     // calendar heatmap: last 35 days (5 weeks × 7)
-    const calDays: { date: Date; count: number }[] = [];
+    const calDays: { date: Date; count: number; habitCount: number }[] = [];
     for (let i = 34; i >= 0; i--) {
       const d = startOfDay(addDays(today, -i));
       const count = doneTasks.filter(
         (t) => startOfDay(new Date(t.completedAt!)).getTime() === d.getTime(),
       ).length;
-      calDays.push({ date: d, count });
+      const habitCount = habitCompletionsByDay.get(d.getTime()) ?? 0;
+      calDays.push({ date: d, count, habitCount });
     }
 
-    // current streak
+    // current streak (tasks or habits)
+    const anyActivityDays = new Set([
+      ...completionDays,
+      ...[...habitCompletionsByDay.keys()],
+    ]);
     let streak = 0;
     let cursor = today;
-    while (completionDays.has(cursor.getTime())) {
+    while (anyActivityDays.has(cursor.getTime())) {
       streak++;
       cursor = startOfDay(addDays(cursor, -1));
     }
 
     // days with completions in last 30
     const cutoff = startOfDay(addDays(today, -29)).getTime();
-    const activeDays = [...completionDays].filter((d) => d >= cutoff).length;
+    const activeDays = [...anyActivityDays].filter((d) => d >= cutoff).length;
 
     return { calDays, streak, activeDays };
-  }, [tasks]);
+  }, [tasks, habits]);
 
   // ────────────────────────────────────────────────────────────────────────
 
@@ -527,11 +544,13 @@ export default function AnalyticsPage() {
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-function CalendarHeatmap({ days }: { days: { date: Date; count: number }[] }) {
+function CalendarHeatmap({
+  days,
+}: {
+  days: { date: Date; count: number; habitCount: number }[];
+}) {
   const today = startOfDay(new Date());
 
-  // Build 5×7 grid
-  // days is already sorted oldest first, 35 entries
   return (
     <div>
       <div style={{ display: 'flex', gap: 2, marginBottom: 4 }}>
@@ -554,19 +573,30 @@ function CalendarHeatmap({ days }: { days: { date: Date; count: number }[] }) {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
         {days.map((d, i) => {
           const isToday = d.date.getTime() === today.getTime();
-          const intensity = d.count === 0 ? 0 : d.count === 1 ? 0.4 : d.count <= 3 ? 0.65 : 0.9;
+          const total = d.count + d.habitCount;
+          // task completions → blue channel; habit completions → green tint overlay
+          const taskIntensity = d.count === 0 ? 0 : d.count === 1 ? 0.4 : d.count <= 3 ? 0.65 : 0.9;
+          const habitIntensity = d.habitCount === 0 ? 0 : d.habitCount === 1 ? 0.35 : d.habitCount <= 3 ? 0.55 : 0.8;
+          const bg =
+            d.count > 0 && d.habitCount > 0
+              ? `rgba(80, 160, 120, ${Math.max(taskIntensity, habitIntensity)})`  // mixed teal
+              : d.count > 0
+              ? `rgba(59, 130, 246, ${taskIntensity})`   // blue = tasks
+              : d.habitCount > 0
+              ? `rgba(34, 197, 94, ${habitIntensity})`   // green = habits only
+              : 'var(--bg-3)';
+          const tooltipParts: string[] = [];
+          if (d.count) tooltipParts.push(`${d.count} task${d.count !== 1 ? 's' : ''}`);
+          if (d.habitCount) tooltipParts.push(`${d.habitCount} habit${d.habitCount !== 1 ? 's' : ''}`);
           return (
             <div
               key={i}
-              title={`${d.date.toLocaleDateString()} — ${d.count} task${d.count !== 1 ? 's' : ''}`}
+              title={`${d.date.toLocaleDateString()} — ${total === 0 ? 'no activity' : tooltipParts.join(', ')}`}
               style={{
                 width: 'calc((100% - 6 * 3px) / 7)',
                 aspectRatio: '1',
                 borderRadius: 3,
-                background:
-                  d.count > 0
-                    ? `rgba(59, 130, 246, ${intensity})`
-                    : 'var(--bg-3)',
+                background: bg,
                 outline: isToday ? `2px solid ${ACCENT}` : 'none',
                 outlineOffset: 1,
               }}
@@ -574,8 +604,20 @@ function CalendarHeatmap({ days }: { days: { date: Date; count: number }[] }) {
           );
         })}
       </div>
-      <div style={{ fontSize: 10, color: 'var(--t2)', marginTop: 8 }}>
-        Last 35 days · darker = more tasks completed
+      <div style={{ fontSize: 10, color: 'var(--t2)', marginTop: 8, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <span>Last 35 days</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: 'rgba(59,130,246,0.7)' }} />
+          tasks
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: 'rgba(34,197,94,0.7)' }} />
+          habits
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: 'rgba(80,160,120,0.7)' }} />
+          both
+        </span>
       </div>
     </div>
   );

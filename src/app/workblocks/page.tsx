@@ -4,10 +4,11 @@ import { useEffect, useState } from 'react';
 import { useTaskStore } from '@/stores/taskStore';
 import { useWorkblockStore } from '@/stores/workblockStore';
 import { fillWorkblock, workblockToIcs } from '@/lib/scheduling/workblocks';
-import type { Workblock, ScheduleSegment, Task } from '@/types';
+import type { Workblock, ScheduleSegment, Task, Habit } from '@/types';
 import { downloadFile } from '@/lib/utils/download';
 import { getDistinctCategories } from '@/lib/utils/categories';
 import { ThemeToggleButton } from '@/components/ThemeToggleButton';
+import { db } from '@/lib/db/dexie';
 
 /* ─── Helpers ─── */
 
@@ -41,6 +42,93 @@ const sectionLabel: React.CSSProperties = {
   textTransform: 'uppercase',
   color: 'var(--t2)',
 };
+
+/* ─── Habit helpers ─── */
+
+function startOfDay(d: Date): Date {
+  const r = new Date(d); r.setHours(0, 0, 0, 0); return r;
+}
+
+function isDueOn(habit: Habit, day: Date): boolean {
+  if (habit.frequency === 'daily') return true;
+  if (habit.frequency === 'weekly') return habit.customDays?.includes(day.getDay()) ?? false;
+  if (habit.frequency === 'custom') {
+    const interval = habit.customDays?.[0] ?? 1;
+    const created = startOfDay(new Date(habit.createdAt));
+    const target = startOfDay(day);
+    const diff = Math.round((target.getTime() - created.getTime()) / 86_400_000);
+    return diff >= 0 && diff % interval === 0;
+  }
+  return false;
+}
+
+/** Habits with a targetTime that fall within the workblock window and are due that day */
+function getHabitSlotsForBlock(habits: Habit[], wb: Workblock): { habit: Habit; at: Date }[] {
+  const wbStart = new Date(wb.start);
+  const wbEnd = new Date(wb.end);
+  const wbDay = startOfDay(wbStart);
+  const slots: { habit: Habit; at: Date }[] = [];
+
+  for (const h of habits) {
+    if (!h.targetTime) continue;
+    if (!isDueOn(h, wbDay)) continue;
+    const [hh, mm] = h.targetTime.split(':').map(Number);
+    const at = new Date(wbDay);
+    at.setHours(hh, mm, 0, 0);
+    if (at >= wbStart && at < wbEnd) {
+      slots.push({ habit: h, at });
+    }
+  }
+  return slots.sort((a, b) => a.at.getTime() - b.at.getTime());
+}
+
+/* ─── HabitSlots component ─── */
+
+function HabitSlots({ slots }: { slots: { habit: Habit; at: Date }[] }) {
+  if (!slots.length) return null;
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div
+        style={{
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: '0.07em',
+          textTransform: 'uppercase',
+          color: 'var(--t3)',
+          marginBottom: 4,
+        }}
+      >
+        Fixed habit slots
+      </div>
+      <ol style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {slots.map(({ habit, at }, i) => (
+          <li
+            key={i}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '4px 8px',
+              borderRadius: 'var(--r)',
+              background: 'var(--bg-2)',
+              borderLeft: '2px solid var(--ok)',
+            }}
+          >
+            <span
+              className="tabular-nums"
+              style={{ fontSize: 11, color: 'var(--t2)', flexShrink: 0, width: 100 }}
+            >
+              {fmtTime(at)} (fixed)
+            </span>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              ○ {habit.title}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
 
 /* ─── Segment timeline ─── */
 
@@ -125,6 +213,7 @@ export default function WorkblocksPage() {
   const { tasks, loading: tasksLoading, loadTasks } = useTaskStore();
   const { workblocks, loading: wbLoading, loadWorkblocks, addWorkblock, deleteWorkblock } =
     useWorkblockStore();
+  const [habits, setHabits] = useState<Habit[]>([]);
 
   const now = new Date();
   const roundedNow   = new Date(Math.ceil(now.getTime() / 60_000) * 60_000);
@@ -144,6 +233,7 @@ export default function WorkblocksPage() {
   useEffect(() => {
     loadTasks();
     loadWorkblocks();
+    db.habits.toArray().then(setHabits);
   }, [loadTasks, loadWorkblocks]);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -545,8 +635,9 @@ export default function WorkblocksPage() {
                       </div>
                     </div>
 
-                    {/* Segment list */}
+                    {/* Habit fixed slots + task segments */}
                     <div style={{ marginTop: 10 }}>
+                      <HabitSlots slots={getHabitSlotsForBlock(habits, wb)} />
                       <SegmentList segments={filled.segments} taskMap={taskMap} />
                     </div>
                   </div>

@@ -44,3 +44,16 @@ export interface TimerSession {
   endedAt?: string;
   pausedMs: number;
 }
+
+export interface Habit {
+  id: string;
+  title: string;
+  frequency: 'daily' | 'weekly' | 'custom';
+  /** weekly: day-of-week numbers (0=Sun…6=Sat); custom: [intervalDays] */
+  customDays?: number[];
+  /** HH:MM — optional fixed target time */
+  targetTime?: string;
+  /** ISO date strings (YYYY-MM-DD) of completions */
+  completionLog: string[];
+  createdAt: string;
+}

@@ -7,6 +7,7 @@ import { useTheme } from './ThemeProvider';
 const NAV_ITEMS = [
   { href: '/',            label: 'Tasks',      icon: '◈' },
   { href: '/workblocks',  label: 'Workblocks', icon: '▦' },
+  { href: '/habits',      label: 'Habits',     icon: '○' },
   { href: '/analytics',   label: 'Analytics',  icon: '◎' },
 ];
 
