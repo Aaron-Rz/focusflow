@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import { useSyncStore } from '@/stores/syncStore';
-import { syncAll } from '@/lib/sync/supabase-sync';
+import { syncAll, clearLocalData } from '@/lib/sync/supabase-sync';
 import { ThemeToggleButton } from '@/components/ThemeToggleButton';
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -45,10 +45,14 @@ export default function SettingsPage() {
 
   const handleSignOut = async () => {
     setSigningOut(true);
+    // 1. End the Supabase session (clears the auth cookie).
     await createClient().auth.signOut();
+    // 2. Wipe ALL local data so the next person on this device can't see or
+    //    accidentally upload the previous account's tasks/habits/etc.
+    await clearLocalData();
     useSyncStore.getState().setUser(null, null);
-    setSigningOut(false);
-    router.push('/');
+    // 3. Hard reload to reset all in-memory Zustand stores to empty.
+    window.location.assign('/');
   };
 
   const handleManualSync = () => {

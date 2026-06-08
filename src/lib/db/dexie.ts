@@ -1,11 +1,19 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { Task, Workblock, TimerSession, Habit } from '@/types';
 
+/** Tombstone: records a deletion so it propagates to other devices instead of resurrecting. */
+export interface Deletion {
+  id: string;          // the deleted row's id
+  entity: 'tasks' | 'workblocks' | 'timer_sessions' | 'habits';
+  deletedAt: string;   // ISO
+}
+
 class FocusFlowDB extends Dexie {
   tasks!: EntityTable<Task, 'id'>;
   workblocks!: EntityTable<Workblock, 'id'>;
   timerSessions!: EntityTable<TimerSession, 'id'>;
   habits!: EntityTable<Habit, 'id'>;
+  deletions!: EntityTable<Deletion, 'id'>;
 
   constructor() {
     super('focusflow');
@@ -59,6 +67,14 @@ class FocusFlowDB extends Dexie {
             }),
         ]);
       });
+
+    this.version(4).stores({
+      tasks: 'id, status, parentId, dependsOnId, category, deadline, updatedAt',
+      workblocks: 'id, start, end, updatedAt',
+      timerSessions: 'id, taskId, startedAt, updatedAt',
+      habits: 'id, frequency, createdAt, updatedAt',
+      deletions: 'id, entity, deletedAt',
+    });
   }
 }
 
