@@ -4,6 +4,8 @@ import './globals.css';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { Nav } from '@/components/Nav';
 import { BackupReminderBanner } from '@/components/BackupReminderBanner';
+import { SyncInit } from '@/components/SyncInit';
+import { SyncStatusBar } from '@/components/SyncStatusBar';
 
 const dmSans = DM_Sans({
   subsets: ['latin'],
@@ -47,9 +49,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <ThemeProvider>
+          <SyncInit />
           <BackupReminderBanner />
           <Nav />
           {children}
+          <SyncStatusBar />
         </ThemeProvider>
       </body>
     </html>

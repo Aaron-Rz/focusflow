@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from '@/lib/db/dexie';
 import type { Habit } from '@/types';
 import { ThemeToggleButton } from '@/components/ThemeToggleButton';
+import { syncUpsertHabit, syncDeleteHabit } from '@/lib/sync/supabase-sync';
 
 // ─── date helpers ─────────────────────────────────────────────────────────────
 
@@ -180,8 +181,9 @@ export default function HabitsPage() {
     const newLog = alreadyDone
       ? habit.completionLog.filter((d) => d !== dateStr)
       : [...habit.completionLog, dateStr];
-    const updated: Habit = { ...habit, completionLog: newLog };
+    const updated: Habit = { ...habit, completionLog: newLog, updatedAt: new Date().toISOString() };
     await db.habits.put(updated);
+    syncUpsertHabit(updated);
     setHabits((prev) => prev.map((h) => (h.id === habit.id ? updated : h)));
   };
 
@@ -233,6 +235,7 @@ export default function HabitsPage() {
         ? [form.intervalDays]
         : undefined;
 
+    const now = new Date().toISOString();
     if (editingId) {
       const existing = habits.find((h) => h.id === editingId);
       if (!existing) { setSubmitting(false); return; }
@@ -242,8 +245,10 @@ export default function HabitsPage() {
         frequency: form.frequency,
         customDays: customDaysValue,
         targetTime: form.targetTime || undefined,
+        updatedAt: now,
       };
       await db.habits.put(updated);
+      syncUpsertHabit(updated);
     } else {
       const newHabit: Habit = {
         id: uuidv4(),
@@ -252,9 +257,11 @@ export default function HabitsPage() {
         customDays: customDaysValue,
         targetTime: form.targetTime || undefined,
         completionLog: [],
-        createdAt: new Date().toISOString(),
+        createdAt: now,
+        updatedAt: now,
       };
       await db.habits.add(newHabit);
+      syncUpsertHabit(newHabit);
     }
 
     setSubmitting(false);
@@ -265,6 +272,7 @@ export default function HabitsPage() {
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this habit and all its history?')) return;
     await db.habits.delete(id);
+    syncDeleteHabit(id);
     setHabits((prev) => prev.filter((h) => h.id !== id));
   };
 

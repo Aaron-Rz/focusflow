@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { href: '/workblocks',  label: 'Workblocks', icon: '▦' },
   { href: '/habits',      label: 'Habits',     icon: '○' },
   { href: '/analytics',   label: 'Analytics',  icon: '◎' },
+  { href: '/settings',    label: 'Settings',   icon: '⚙' },
 ];
 
 export function Nav() {

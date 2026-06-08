@@ -3,6 +3,10 @@ import { db } from '@/lib/db/dexie';
 import type { Task, Importance, CogLoad } from '@/types';
 import { detectCycle } from '@/lib/algorithm/dependencies';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  syncUpsertTask,
+  syncDeleteTask,
+} from '@/lib/sync/supabase-sync';
 
 /** Returns the nesting depth of a task: 0 = top-level, 1 = child, 2 = grandchild. */
 export function getTaskDepth(taskId: string, tasks: Task[]): number {
@@ -29,8 +33,6 @@ interface TaskStore {
   markDone: (id: string) => Promise<void>;
   markOpen: (id: string) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
-  // Set/clear a Must-Do predecessor. Rejects (returns an error message) if it would
-  // create a cycle; returns null on success.
   setDependency: (taskId: string, dependsOnId: string | undefined) => Promise<string | null>;
 }
 
@@ -52,66 +54,66 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         return 'Cannot add a subtask here — maximum depth is 2 (grandchild level).';
       }
     }
-    // Cycle check for sibling Must-Do dependency
     if (input.dependsOnId) {
       const mockTask: Task = {
-        id: '__new__',
-        title: '',
-        effortMin: input.effortMin,
-        importance: input.importance,
-        cogLoad: input.cogLoad,
-        dependsOnId: input.dependsOnId,
-        parentId: input.parentId,
-        status: 'open',
-        createdAt: new Date().toISOString(),
+        id: '__new__', title: '', effortMin: input.effortMin,
+        importance: input.importance, cogLoad: input.cogLoad,
+        dependsOnId: input.dependsOnId, parentId: input.parentId,
+        status: 'open', createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
       if (detectCycle([...current, mockTask])) {
         return 'That dependency would create a cycle.';
       }
     }
+    const now = new Date().toISOString();
     const task: Task = {
-      id: uuidv4(),
-      title: input.title,
-      effortMin: input.effortMin,
-      importance: input.importance,
-      cogLoad: input.cogLoad,
-      deadline: input.deadline || undefined,
-      category: input.category || undefined,
-      dependsOnId: input.dependsOnId || undefined,
-      parentId: input.parentId || undefined,
-      status: 'open',
-      createdAt: new Date().toISOString(),
+      id: uuidv4(), title: input.title, effortMin: input.effortMin,
+      importance: input.importance, cogLoad: input.cogLoad,
+      deadline: input.deadline || undefined, category: input.category || undefined,
+      dependsOnId: input.dependsOnId || undefined, parentId: input.parentId || undefined,
+      status: 'open', createdAt: now, updatedAt: now,
     };
     await db.tasks.add(task);
+    syncUpsertTask(task);
     await get().loadTasks();
     return null;
   },
 
   markDone: async (id) => {
-    await db.tasks.update(id, { status: 'done', completedAt: new Date().toISOString() });
+    const now = new Date().toISOString();
+    await db.tasks.update(id, { status: 'done', completedAt: now, updatedAt: now });
+    const updated = await db.tasks.get(id);
+    if (updated) syncUpsertTask(updated);
     await get().loadTasks();
   },
 
   markOpen: async (id) => {
-    await db.tasks.update(id, { status: 'open', completedAt: undefined });
+    const now = new Date().toISOString();
+    await db.tasks.update(id, { status: 'open', completedAt: undefined, updatedAt: now });
+    const updated = await db.tasks.get(id);
+    if (updated) syncUpsertTask(updated);
     await get().loadTasks();
   },
 
   deleteTask: async (id) => {
     await db.tasks.delete(id);
+    syncDeleteTask(id);
     await get().loadTasks();
   },
 
   setDependency: async (taskId, dependsOnId) => {
     if (dependsOnId === taskId) return 'A task cannot depend on itself.';
-    // Simulate the change against current tasks and reject if it forms a cycle.
     const candidate = get().tasks.map((t) =>
-      t.id === taskId ? { ...t, dependsOnId } : t
+      t.id === taskId ? { ...t, dependsOnId } : t,
     );
     if (detectCycle(candidate)) {
       return 'That dependency would create a cycle.';
     }
-    await db.tasks.update(taskId, { dependsOnId: dependsOnId ?? undefined });
+    const now = new Date().toISOString();
+    await db.tasks.update(taskId, { dependsOnId: dependsOnId ?? undefined, updatedAt: now });
+    const updated = await db.tasks.get(taskId);
+    if (updated) syncUpsertTask(updated);
     await get().loadTasks();
     return null;
   },

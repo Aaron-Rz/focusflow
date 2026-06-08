@@ -15,6 +15,7 @@ export interface Task {
   status: TaskStatus;
   createdAt: string;
   completedAt?: string;
+  updatedAt: string;
 }
 
 export interface Workblock {
@@ -23,10 +24,11 @@ export interface Workblock {
   end: string;
   onOverrun: 'abortTask' | 'extendBlock';
   taskIds: string[];
-  categoryFilter?: string[];  // when non-empty, only tasks with matching category are eligible
+  categoryFilter?: string[];
   pomodoroEnabled?: boolean;
   pomodoroWorkMin?: number;
   pomodoroBreakMin?: number;
+  updatedAt: string;
 }
 
 export interface ScheduleSegment {
@@ -43,6 +45,7 @@ export interface TimerSession {
   startedAt: string;
   endedAt?: string;
   pausedMs: number;
+  updatedAt: string;
 }
 
 export interface Habit {
@@ -56,4 +59,5 @@ export interface Habit {
   /** ISO date strings (YYYY-MM-DD) of completions */
   completionLog: string[];
   createdAt: string;
+  updatedAt: string;
 }
