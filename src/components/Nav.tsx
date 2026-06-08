@@ -5,8 +5,9 @@ import { usePathname } from 'next/navigation';
 import { useTheme } from './ThemeProvider';
 
 const NAV_ITEMS = [
-  { href: '/',           label: 'Tasks',      icon: '◈' },
-  { href: '/workblocks', label: 'Workblocks',  icon: '▦' },
+  { href: '/',            label: 'Tasks',      icon: '◈' },
+  { href: '/workblocks',  label: 'Workblocks', icon: '▦' },
+  { href: '/analytics',   label: 'Analytics',  icon: '◎' },
 ];
 
 export function Nav() {
