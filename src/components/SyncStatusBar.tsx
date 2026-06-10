@@ -76,8 +76,11 @@ export function SyncStatusBar() {
               cursor: 'pointer',
               fontSize: 14,
               lineHeight: 1,
-              padding: '0 4px',
+              padding: '0 8px',
               marginLeft: 4,
+              minHeight: 44,
+              minWidth: 44,
+              touchAction: 'manipulation',
             }}
             aria-label="Dismiss"
           >

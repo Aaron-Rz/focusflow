@@ -58,8 +58,10 @@ export function BackupReminderBanner() {
           border: 'none',
           cursor: 'pointer',
           fontWeight: 600,
-          minHeight: 28,
+          minHeight: 44,
+          minWidth: 44,
           flexShrink: 0,
+          touchAction: 'manipulation',
         }}
       >
         Export
@@ -73,8 +75,11 @@ export function BackupReminderBanner() {
           border: 'none',
           cursor: 'pointer',
           textDecoration: 'underline',
-          padding: 0,
+          padding: '0 8px',
+          minHeight: 44,
+          minWidth: 44,
           flexShrink: 0,
+          touchAction: 'manipulation',
         }}
       >
         Dismiss

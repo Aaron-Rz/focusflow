@@ -21,8 +21,20 @@ export default function AuthCallbackPage() {
     // detectSessionInUrl runs asynchronously; onAuthStateChange fires once the
     // code exchange completes. Also check immediately in case it's already done.
     const finish = (ok: boolean) => {
-      if (ok) router.replace('/');
-      else setFailed(true);
+      if (ok) {
+        // In iOS standalone PWA, router.replace keeps us inside the PWA context.
+        // If this page was opened in a new Safari tab (OAuth redirect), fall back
+        // to window.location so the installed PWA's universal link picks it up.
+        const standalone = typeof window !== 'undefined' &&
+          (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+        if (standalone) {
+          router.replace('/');
+        } else {
+          window.location.replace('/');
+        }
+      } else {
+        setFailed(true);
+      }
     };
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -57,9 +69,9 @@ export default function AuthCallbackPage() {
           <button
             onClick={() => router.replace('/auth/login')}
             style={{
-              padding: '8px 16px', borderRadius: 'var(--r)', background: 'var(--accent)',
+              padding: '12px 20px', borderRadius: 'var(--r)', background: 'var(--accent)',
               color: 'var(--accent-text)', border: 'none', cursor: 'pointer',
-              fontSize: 13, fontWeight: 600,
+              fontSize: 13, fontWeight: 600, minHeight: 44, touchAction: 'manipulation',
             }}
           >
             Back to sign in
