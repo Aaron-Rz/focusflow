@@ -9,6 +9,7 @@ import { downloadFile } from '@/lib/utils/download';
 import { getDistinctCategories } from '@/lib/utils/categories';
 import { ThemeToggleButton } from '@/components/ThemeToggleButton';
 import { db } from '@/lib/db/dexie';
+import { isDueToday } from '@/lib/habits/schedule';
 
 /* ─── Helpers ─── */
 
@@ -49,19 +50,6 @@ function startOfDay(d: Date): Date {
   const r = new Date(d); r.setHours(0, 0, 0, 0); return r;
 }
 
-function isDueOn(habit: Habit, day: Date): boolean {
-  if (habit.frequency === 'daily') return true;
-  if (habit.frequency === 'weekly') return habit.customDays?.includes(day.getDay()) ?? false;
-  if (habit.frequency === 'custom') {
-    const interval = habit.customDays?.[0] ?? 1;
-    const created = startOfDay(new Date(habit.createdAt));
-    const target = startOfDay(day);
-    const diff = Math.round((target.getTime() - created.getTime()) / 86_400_000);
-    return diff >= 0 && diff % interval === 0;
-  }
-  return false;
-}
-
 /** Habits with a targetTime that fall within the workblock window and are due that day */
 function getHabitSlotsForBlock(habits: Habit[], wb: Workblock): { habit: Habit; at: Date }[] {
   const wbStart = new Date(wb.start);
@@ -71,7 +59,7 @@ function getHabitSlotsForBlock(habits: Habit[], wb: Workblock): { habit: Habit; 
 
   for (const h of habits) {
     if (!h.targetTime) continue;
-    if (!isDueOn(h, wbDay)) continue;
+    if (!isDueToday(h, wbDay)) continue;
     const [hh, mm] = h.targetTime.split(':').map(Number);
     const at = new Date(wbDay);
     at.setHours(hh, mm, 0, 0);

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { db } from '@/lib/db/dexie';
 import type { Task, TimerSession, Habit } from '@/types';
+import { expectedCompletions, completionDateStr } from '@/lib/habits/schedule';
 import {
   BarChart,
   Bar,
@@ -53,6 +54,21 @@ function mean(vals: number[]): number {
 function inWindow(dateStr: string, from: Date, to: Date): boolean {
   const d = new Date(dateStr);
   return d >= from && d <= to;
+}
+
+/** Average completion hour (local time) for entries that carry time info, or null if none. */
+function avgTimeOfDay(log: string[], from: Date, to: Date): string | null {
+  const hours: number[] = [];
+  for (const e of log) {
+    if (e.length <= 10) continue; // legacy date-only entry, no time info
+    const d = new Date(e);
+    if (d >= from && d <= to) hours.push(d.getHours() + d.getMinutes() / 60);
+  }
+  if (!hours.length) return null;
+  const avg = hours.reduce((a, b) => a + b, 0) / hours.length;
+  const h = Math.floor(avg);
+  const m = Math.round((avg - h) * 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 // ─── types ───────────────────────────────────────────────────────────────────
@@ -499,7 +515,7 @@ function HabitHeatmap({
 // ─── habit stats helpers ──────────────────────────────────────────────────────
 
 function computeStreaks(log: string[]) {
-  const dates = [...new Set(log)]
+  const dates = [...new Set(log.map(completionDateStr))]
     .map((d) => startOfDay(new Date(d)))
     .sort((a, b) => a.getTime() - b.getTime());
 
@@ -532,30 +548,11 @@ function computeStreaks(log: string[]) {
   return { current, best, avgLength: +mean(streaks).toFixed(1) };
 }
 
-function expectedOccurrences(h: Habit, from: Date, to: Date): number {
-  if (h.frequency === 'daily') {
-    return Math.ceil((to.getTime() - from.getTime()) / 86400000) + 1;
-  }
-  if (h.frequency === 'weekly') {
-    const dows = h.customDays ?? [];
-    if (!dows.length) return 0;
-    let n = 0;
-    for (let d = new Date(from); d <= to; d = addDays(d, 1)) {
-      if (dows.includes(d.getDay())) n++;
-    }
-    return n;
-  }
-  if (h.frequency === 'custom' && h.customDays?.length) {
-    const interval = h.customDays[0];
-    return Math.floor((to.getTime() - from.getTime()) / 86400000 / interval) + 1;
-  }
-  return Math.ceil((to.getTime() - from.getTime()) / 86400000) + 1;
-}
 
 function getMissPattern(log: string[], from: Date, to: Date) {
   const dates = log
-    .filter((d) => inWindow(d, from, to))
-    .map((d) => startOfDay(new Date(d)))
+    .filter((d) => inWindow(new Date(d).toISOString(), from, to))
+    .map((d) => startOfDay(new Date(completionDateStr(d))))
     .sort((a, b) => a.getTime() - b.getTime());
 
   if (dates.length < 2) return { longestGap: 0, missedAfterStreak: 0 };
@@ -578,8 +575,9 @@ function getMissPattern(log: string[], from: Date, to: Date) {
 
 function getDowBreakdown(log: string[], from: Date, to: Date) {
   const counts = [0, 0, 0, 0, 0, 0, 0];
-  for (const d of log) {
-    if (inWindow(d, from, to)) counts[new Date(d).getDay()]++;
+  for (const e of log) {
+    const d = new Date(e);
+    if (d >= from && d <= to) counts[d.getDay()]++;
   }
   const labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   return [1, 2, 3, 4, 5, 6, 0].map((i) => ({ day: labels[i], count: counts[i] }));
@@ -895,18 +893,23 @@ interface HabitStat {
   rate: number;
   miss: { longestGap: number; missedAfterStreak: number };
   dow: { day: string; count: number }[];
+  avgTime: string | null;
 }
 
 function HabitCard({ stat, windowLabel }: { stat: HabitStat; windowLabel: string }) {
-  const { habit, streaks, expected, actual, rate, miss, dow } = stat;
+  const { habit, streaks, expected, actual, rate, miss, dow, avgTime } = stat;
   const [expanded, setExpanded] = useState(false);
 
+  const DOW_A = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const f = habit.frequency;
   const freqLabel =
-    habit.frequency === 'daily'
+    f.type === 'daily'
       ? 'Daily'
-      : habit.frequency === 'weekly'
-      ? `Weekly (${(habit.customDays ?? []).map((d) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d]).join(', ')})`
-      : `Every ${habit.customDays?.[0] ?? '?'} days`;
+      : f.type === 'interval'
+      ? `Every ${f.every} days`
+      : f.type === 'weekly'
+      ? `Weekly (${f.weekdays.map((d) => DOW_A[d]).join(', ')})`
+      : `Monthly (${f.daysOfMonth.sort((a, b) => a - b).join(', ')})`;
 
   return (
     <div
@@ -1045,6 +1048,21 @@ function HabitCard({ stat, windowLabel }: { stat: HabitStat; windowLabel: string
               </div>
             )}
           </div>
+
+          {/* avg time of day */}
+          {avgTime && (
+            <div
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '4px 10px', borderRadius: 'var(--r)',
+                background: 'var(--bg-2)', border: '1px solid var(--border)',
+                fontSize: 12, color: 'var(--t2)', marginBottom: 12,
+              }}
+            >
+              <span>⏱</span>
+              <span>Avg completion time: <strong style={{ color: 'var(--t1)' }}>{avgTime}</strong></span>
+            </div>
+          )}
 
           {/* day-of-week bar chart */}
           <div style={{ fontSize: 11, color: 'var(--t2)', marginBottom: 8 }}>
@@ -1339,9 +1357,10 @@ export default function AnalyticsPage() {
 
     const habitByDay = new Map<number, number>();
     for (const h of habits) {
-      for (const d of h.completionLog) {
-        if (inWindow(d, from, to)) {
-          const ts = startOfDay(new Date(d)).getTime();
+      for (const e of h.completionLog) {
+        const d = new Date(e);
+        if (d >= from && d <= to) {
+          const ts = startOfDay(new Date(completionDateStr(e))).getTime();
           habitByDay.set(ts, (habitByDay.get(ts) ?? 0) + 1);
         }
       }
@@ -1371,25 +1390,24 @@ export default function AnalyticsPage() {
 
   // ── habit stats ───────────────────────────────────────────────────────────
   const habitStats = useMemo((): HabitStat[] => {
-    return habits.map((h) => ({
-      habit: h,
-      streaks: computeStreaks(h.completionLog),
-      expected: expectedOccurrences(h, from, to),
-      actual: h.completionLog.filter((d) => inWindow(d, from, to)).length,
-      rate:
-        expectedOccurrences(h, from, to) > 0
-          ? Math.min(
-              100,
-              Math.round(
-                (h.completionLog.filter((d) => inWindow(d, from, to)).length /
-                  expectedOccurrences(h, from, to)) *
-                  100,
-              ),
-            )
-          : 0,
-      miss: getMissPattern(h.completionLog, from, to),
-      dow: getDowBreakdown(h.completionLog, from, to),
-    }));
+    return habits.map((h) => {
+      const actual = h.completionLog.filter((e) => {
+        const d = new Date(e);
+        return d >= from && d <= to;
+      }).length;
+      const expected = expectedCompletions(h, from, to);
+      const rate = expected > 0 ? Math.min(100, Math.round((actual / expected) * 100)) : 0;
+      return {
+        habit: h,
+        streaks: computeStreaks(h.completionLog),
+        expected,
+        actual,
+        rate,
+        miss: getMissPattern(h.completionLog, from, to),
+        dow: getDowBreakdown(h.completionLog, from, to),
+        avgTime: avgTimeOfDay(h.completionLog, from, to),
+      };
+    });
   }, [habits, from, to]);
 
   // ── render ────────────────────────────────────────────────────────────────

@@ -48,15 +48,19 @@ export interface TimerSession {
   updatedAt: string;
 }
 
+export type HabitFrequency =
+  | { type: 'daily' }
+  | { type: 'interval'; every: number }        // every N days from creation date
+  | { type: 'weekly'; weekdays: number[] }     // 0=Sun … 6=Sat
+  | { type: 'monthly'; daysOfMonth: number[] }; // 1–31
+
 export interface Habit {
   id: string;
   title: string;
-  frequency: 'daily' | 'weekly' | 'custom';
-  /** weekly: day-of-week numbers (0=Sun…6=Sat); custom: [intervalDays] */
-  customDays?: number[];
+  frequency: HabitFrequency;
   /** HH:MM — optional fixed target time */
   targetTime?: string;
-  /** ISO date strings (YYYY-MM-DD) of completions */
+  /** ISO datetime strings — new entries include time; legacy entries are YYYY-MM-DD */
   completionLog: string[];
   createdAt: string;
   updatedAt: string;

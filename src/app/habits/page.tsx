@@ -3,9 +3,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '@/lib/db/dexie';
-import type { Habit } from '@/types';
+import type { Habit, HabitFrequency } from '@/types';
 import { ThemeToggleButton } from '@/components/ThemeToggleButton';
 import { syncUpsertHabit, syncDeleteHabit } from '@/lib/sync/supabase-sync';
+import { isDueToday, completionDateStr } from '@/lib/habits/schedule';
 
 // ─── date helpers ─────────────────────────────────────────────────────────────
 
@@ -21,7 +22,6 @@ function addDays(d: Date, n: number): Date {
   return r;
 }
 
-/** Returns YYYY-MM-DD in local time */
 function toDateStr(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -29,49 +29,27 @@ function toDateStr(d: Date): string {
   return `${y}-${m}-${dd}`;
 }
 
-const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
 // ─── habit logic ─────────────────────────────────────────────────────────────
 
-function isDueOn(habit: Habit, day: Date): boolean {
-  if (habit.frequency === 'daily') return true;
-  if (habit.frequency === 'weekly') {
-    const dow = day.getDay();
-    return habit.customDays?.includes(dow) ?? false;
-  }
-  if (habit.frequency === 'custom') {
-    const intervalDays = habit.customDays?.[0] ?? 1;
-    const created = startOfDay(new Date(habit.createdAt));
-    const target = startOfDay(day);
-    const diffDays = Math.round((target.getTime() - created.getTime()) / 86_400_000);
-    return diffDays >= 0 && diffDays % intervalDays === 0;
-  }
-  return false;
-}
-
+/** Is the habit completed on a given calendar day? Handles both YYYY-MM-DD and full ISO entries. */
 function isCompletedOn(habit: Habit, day: Date): boolean {
-  return habit.completionLog.includes(toDateStr(day));
+  const target = toDateStr(day);
+  return habit.completionLog.some((e) => completionDateStr(e) === target);
 }
 
 function currentStreak(habit: Habit, today: Date): number {
-  const completedSet = new Set(habit.completionLog);
+  const doneSet = new Set(habit.completionLog.map(completionDateStr));
   let streak = 0;
   let cursor = startOfDay(today);
-  // If not yet completed today but was yesterday, count from yesterday
-  // (so the streak doesn't reset at midnight before you check in)
   while (true) {
-    const dateStr = toDateStr(cursor);
-    if (completedSet.has(dateStr)) {
+    if (doneSet.has(toDateStr(cursor))) {
       streak++;
       cursor = addDays(cursor, -1);
     } else {
-      // Allow one "today not yet done" grace without breaking streak
-      if (streak === 0) {
-        const yesterday = addDays(cursor, -1);
-        if (completedSet.has(toDateStr(yesterday))) {
-          cursor = yesterday;
-          continue;
-        }
+      // Grace: allow today not yet checked without breaking streak
+      if (streak === 0 && doneSet.has(toDateStr(addDays(cursor, -1)))) {
+        cursor = addDays(cursor, -1);
+        continue;
       }
       break;
     }
@@ -81,32 +59,33 @@ function currentStreak(habit: Habit, today: Date): number {
 
 function longestStreak(habit: Habit): number {
   if (!habit.completionLog.length) return 0;
-  // Deduplicate and sort
-  const sorted = [...new Set(habit.completionLog)].sort();
+  const sorted = [...new Set(habit.completionLog.map(completionDateStr))].sort();
   let max = 1;
   let cur = 1;
   for (let i = 1; i < sorted.length; i++) {
-    const prev = new Date(sorted[i - 1]);
-    const curr = new Date(sorted[i]);
-    const diff = Math.round((curr.getTime() - prev.getTime()) / 86_400_000);
-    if (diff === 1) {
-      cur++;
-      if (cur > max) max = cur;
-    } else if (diff > 1) {
-      cur = 1;
-    }
+    const diff = Math.round(
+      (new Date(sorted[i]).getTime() - new Date(sorted[i - 1]).getTime()) / 86_400_000,
+    );
+    if (diff === 1) { cur++; if (cur > max) max = cur; }
+    else if (diff > 1) cur = 1;
   }
   return max;
 }
 
-function freqLabel(habit: Habit): string {
-  if (habit.frequency === 'daily') return 'Daily';
-  if (habit.frequency === 'weekly') {
-    const days = (habit.customDays ?? []).map((d) => DOW_LABELS[d]).join(', ');
-    return days || 'Weekly';
+function freqLabel(f: HabitFrequency): string {
+  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  switch (f.type) {
+    case 'daily': return 'Daily';
+    case 'interval': return `Every ${f.every} day${f.every !== 1 ? 's' : ''}`;
+    case 'weekly': {
+      const days = f.weekdays.map((d) => DOW[d]).join(', ');
+      return days || 'Weekly (no days set)';
+    }
+    case 'monthly': {
+      const days = f.daysOfMonth.sort((a, b) => a - b).join(', ');
+      return `Monthly (${days || 'no days'})`;
+    }
   }
-  const interval = habit.customDays?.[0] ?? 1;
-  return interval === 1 ? 'Daily' : `Every ${interval} days`;
 }
 
 // ─── styles ───────────────────────────────────────────────────────────────────
@@ -127,23 +106,58 @@ const CARD: React.CSSProperties = {
   overflow: 'hidden',
 };
 
-// ─── blank form state ────────────────────────────────────────────────────────
+const TOGGLE_BTN = (active: boolean): React.CSSProperties => ({
+  width: 40,
+  height: 36,
+  borderRadius: 'var(--r)',
+  border: '1px solid',
+  borderColor: active ? 'var(--accent)' : 'var(--border-2)',
+  background: active ? 'var(--accent-dim)' : 'transparent',
+  color: active ? 'var(--accent)' : 'var(--t2)',
+  cursor: 'pointer',
+  fontSize: 11,
+  fontWeight: active ? 700 : 400,
+});
+
+// ─── form state ───────────────────────────────────────────────────────────────
+
+type FreqType = 'daily' | 'interval' | 'weekly' | 'monthly';
 
 interface FormState {
   title: string;
-  frequency: Habit['frequency'];
-  customDays: number[];
+  freqType: FreqType;
   intervalDays: number;
+  weekdays: number[];
+  daysOfMonth: number[];
   targetTime: string;
 }
 
 const BLANK_FORM: FormState = {
   title: '',
-  frequency: 'daily',
-  customDays: [],
-  intervalDays: 1,
+  freqType: 'daily',
+  intervalDays: 2,
+  weekdays: [],
+  daysOfMonth: [],
   targetTime: '',
 };
+
+function toHabitFrequency(form: FormState): HabitFrequency {
+  switch (form.freqType) {
+    case 'daily': return { type: 'daily' };
+    case 'interval': return { type: 'interval', every: form.intervalDays };
+    case 'weekly': return { type: 'weekly', weekdays: form.weekdays };
+    case 'monthly': return { type: 'monthly', daysOfMonth: form.daysOfMonth };
+  }
+}
+
+function fromHabitFrequency(f: HabitFrequency): Partial<FormState> {
+  switch (f.type) {
+    case 'daily': return { freqType: 'daily' };
+    case 'interval': return { freqType: 'interval', intervalDays: f.every };
+    case 'weekly': return { freqType: 'weekly', weekdays: f.weekdays };
+    case 'monthly': return { freqType: 'monthly', daysOfMonth: f.daysOfMonth };
+  }
+}
 
 // ─── HabitsPage ───────────────────────────────────────────────────────────────
 
@@ -160,34 +174,31 @@ export default function HabitsPage() {
 
   const loadHabits = useCallback(async () => {
     const all = await db.habits.toArray();
-    // Sort by createdAt desc
     all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     setHabits(all);
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    loadHabits();
-  }, [loadHabits]);
+  useEffect(() => { loadHabits(); }, [loadHabits]);
 
-  // ── checklist: habits due today ─────────────────────────────────────────
-  const dueToday = habits.filter((h) => isDueOn(h, today));
+  const dueToday = habits.filter((h) => isDueToday(h, today));
   const doneToday = dueToday.filter((h) => isCompletedOn(h, today));
   const pendingToday = dueToday.filter((h) => !isCompletedOn(h, today));
 
+  // ── checklist toggle ────────────────────────────────────────────────────
   const handleToggle = async (habit: Habit) => {
     const dateStr = toDateStr(today);
-    const alreadyDone = habit.completionLog.includes(dateStr);
+    const alreadyDone = habit.completionLog.some((e) => completionDateStr(e) === dateStr);
     const newLog = alreadyDone
-      ? habit.completionLog.filter((d) => d !== dateStr)
-      : [...habit.completionLog, dateStr];
+      ? habit.completionLog.filter((e) => completionDateStr(e) !== dateStr)
+      : [...habit.completionLog, new Date().toISOString()];
     const updated: Habit = { ...habit, completionLog: newLog, updatedAt: new Date().toISOString() };
     await db.habits.put(updated);
     syncUpsertHabit(updated);
     setHabits((prev) => prev.map((h) => (h.id === habit.id ? updated : h)));
   };
 
-  // ── form helpers ───────────────────────────────────────────────────────
+  // ── form helpers ────────────────────────────────────────────────────────
   const openCreate = () => {
     setEditingId(null);
     setForm(BLANK_FORM);
@@ -197,53 +208,38 @@ export default function HabitsPage() {
 
   const openEdit = (habit: Habit) => {
     setEditingId(habit.id);
-    setForm({
-      title: habit.title,
-      frequency: habit.frequency,
-      customDays: habit.customDays ?? [],
-      intervalDays: habit.customDays?.[0] ?? 1,
-      targetTime: habit.targetTime ?? '',
-    });
+    setForm({ ...BLANK_FORM, ...fromHabitFrequency(habit.frequency), title: habit.title, targetTime: habit.targetTime ?? '' });
     setFormError('');
     setShowForm(true);
   };
 
-  const closeForm = () => {
-    setShowForm(false);
-    setEditingId(null);
-  };
+  const closeForm = () => { setShowForm(false); setEditingId(null); };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
     if (!form.title.trim()) { setFormError('Title is required.'); return; }
-    if (form.frequency === 'weekly' && form.customDays.length === 0) {
-      setFormError('Choose at least one day of the week.');
-      return;
+    if (form.freqType === 'weekly' && form.weekdays.length === 0) {
+      setFormError('Choose at least one day of the week.'); return;
     }
-    if (form.frequency === 'custom' && form.intervalDays < 1) {
-      setFormError('Interval must be at least 1 day.');
-      return;
+    if (form.freqType === 'monthly' && form.daysOfMonth.length === 0) {
+      setFormError('Choose at least one day of the month.'); return;
+    }
+    if (form.freqType === 'interval' && form.intervalDays < 2) {
+      setFormError('Interval must be at least 2 days.'); return;
     }
 
     setSubmitting(true);
-
-    const customDaysValue: number[] | undefined =
-      form.frequency === 'weekly'
-        ? form.customDays
-        : form.frequency === 'custom'
-        ? [form.intervalDays]
-        : undefined;
-
     const now = new Date().toISOString();
+    const frequency = toHabitFrequency(form);
+
     if (editingId) {
       const existing = habits.find((h) => h.id === editingId);
       if (!existing) { setSubmitting(false); return; }
       const updated: Habit = {
         ...existing,
         title: form.title.trim(),
-        frequency: form.frequency,
-        customDays: customDaysValue,
+        frequency,
         targetTime: form.targetTime || undefined,
         updatedAt: now,
       };
@@ -253,8 +249,7 @@ export default function HabitsPage() {
       const newHabit: Habit = {
         id: uuidv4(),
         title: form.title.trim(),
-        frequency: form.frequency,
-        customDays: customDaysValue,
+        frequency,
         targetTime: form.targetTime || undefined,
         completionLog: [],
         createdAt: now,
@@ -276,12 +271,19 @@ export default function HabitsPage() {
     setHabits((prev) => prev.filter((h) => h.id !== id));
   };
 
-  const toggleDayOfWeek = (dow: number) => {
+  const toggleWeekday = (dow: number) => {
     setForm((f) => ({
       ...f,
-      customDays: f.customDays.includes(dow)
-        ? f.customDays.filter((d) => d !== dow)
-        : [...f.customDays, dow],
+      weekdays: f.weekdays.includes(dow) ? f.weekdays.filter((d) => d !== dow) : [...f.weekdays, dow],
+    }));
+  };
+
+  const toggleDayOfMonth = (day: number) => {
+    setForm((f) => ({
+      ...f,
+      daysOfMonth: f.daysOfMonth.includes(day)
+        ? f.daysOfMonth.filter((d) => d !== day)
+        : [...f.daysOfMonth, day],
     }));
   };
 
@@ -294,23 +296,20 @@ export default function HabitsPage() {
       <header
         style={{
           position: 'sticky', top: 0, zIndex: 40,
-          background: 'var(--bg-1)',
-          borderBottom: '1px solid var(--border)',
+          background: 'var(--bg-1)', borderBottom: '1px solid var(--border)',
         }}
       >
         <div
           style={{
-            maxWidth: 640, margin: '0 auto',
-            padding: '10px 16px',
+            maxWidth: 640, margin: '0 auto', padding: '10px 16px',
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
           }}
         >
           <div>
             <h1
               style={{
-                fontFamily: 'var(--ff-dm-sans, sans-serif)',
-                fontWeight: 800, fontSize: 18,
-                letterSpacing: '-0.02em', color: 'var(--t1)', lineHeight: 1,
+                fontFamily: 'var(--ff-dm-sans, sans-serif)', fontWeight: 800,
+                fontSize: 18, letterSpacing: '-0.02em', color: 'var(--t1)', lineHeight: 1,
               }}
             >
               Habits
@@ -324,17 +323,11 @@ export default function HabitsPage() {
             <button
               onClick={showForm ? closeForm : openCreate}
               style={{
-                padding: '8px 14px',
-                borderRadius: 'var(--r)',
+                padding: '8px 14px', borderRadius: 'var(--r)',
                 background: showForm ? 'var(--bg-3)' : 'var(--accent)',
                 color: showForm ? 'var(--t1)' : 'var(--accent-text)',
                 border: showForm ? '1px solid var(--border-2)' : 'none',
-                cursor: 'pointer',
-                fontSize: 13,
-                fontWeight: 600,
-                minHeight: 36,
-                minWidth: 44,
-                letterSpacing: '0.02em',
+                cursor: 'pointer', fontSize: 13, fontWeight: 600, minHeight: 36, minWidth: 44,
               }}
             >
               {showForm ? '× close' : '+ new'}
@@ -348,7 +341,10 @@ export default function HabitsPage() {
         <div style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-1)' }}>
           <form
             onSubmit={handleSubmit}
-            style={{ maxWidth: 640, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 12 }}
+            style={{
+              maxWidth: 640, margin: '0 auto', padding: '16px',
+              display: 'flex', flexDirection: 'column', gap: 12,
+            }}
           >
             <div
               style={{
@@ -363,10 +359,8 @@ export default function HabitsPage() {
               <div
                 style={{
                   fontSize: 12, color: 'var(--error)',
-                  background: 'rgba(192,48,48,0.08)',
-                  border: '1px solid var(--error)',
-                  borderRadius: 'var(--r)',
-                  padding: '6px 10px',
+                  background: 'rgba(192,48,48,0.08)', border: '1px solid var(--error)',
+                  borderRadius: 'var(--r)', padding: '6px 10px',
                 }}
               >
                 {formError}
@@ -387,43 +381,67 @@ export default function HabitsPage() {
               />
             </div>
 
-            {/* Frequency */}
+            {/* Frequency type */}
             <div>
               <label style={fieldLabel}>Frequency</label>
-              <select
-                value={form.frequency}
-                onChange={(e) => setForm((f) => ({ ...f, frequency: e.target.value as Habit['frequency'] }))}
-                style={{ width: '100%' }}
-              >
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly (specific days)</option>
-                <option value="custom">Custom interval</option>
-              </select>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {(
+                  [
+                    { key: 'daily', label: 'Daily' },
+                    { key: 'interval', label: 'Every N days' },
+                    { key: 'weekly', label: 'Weekdays' },
+                    { key: 'monthly', label: 'Days of month' },
+                  ] as { key: FreqType; label: string }[]
+                ).map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, freqType: opt.key }))}
+                    style={{
+                      padding: '6px 12px', borderRadius: 'var(--r)', border: '1px solid',
+                      borderColor: form.freqType === opt.key ? 'var(--accent)' : 'var(--border-2)',
+                      background: form.freqType === opt.key ? 'var(--accent-dim)' : 'transparent',
+                      color: form.freqType === opt.key ? 'var(--accent)' : 'var(--t2)',
+                      cursor: 'pointer', fontSize: 12,
+                      fontWeight: form.freqType === opt.key ? 700 : 400,
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Weekly day picker */}
-            {form.frequency === 'weekly' && (
+            {/* Every N days */}
+            {form.freqType === 'interval' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ ...fieldLabel, marginBottom: 0 }}>Every</label>
+                <input
+                  type="number"
+                  min={2}
+                  max={30}
+                  value={form.intervalDays}
+                  onChange={(e) => setForm((f) => ({ ...f, intervalDays: Number(e.target.value) }))}
+                  style={{ width: 60 }}
+                />
+                <span style={{ fontSize: 13, color: 'var(--t2)' }}>days</span>
+              </div>
+            )}
+
+            {/* Specific weekdays */}
+            {form.freqType === 'weekly' && (
               <div>
                 <label style={fieldLabel}>Days of week</label>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {DOW_LABELS.map((label, dow) => {
-                    const active = form.customDays.includes(dow);
+                  {(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const).map((label, i) => {
+                    const dow = [1, 2, 3, 4, 5, 6, 0][i]; // Mon=1…Sun=0
+                    const active = form.weekdays.includes(dow);
                     return (
                       <button
                         key={dow}
                         type="button"
-                        onClick={() => toggleDayOfWeek(dow)}
-                        style={{
-                          width: 40, height: 36,
-                          borderRadius: 'var(--r)',
-                          border: '1px solid',
-                          borderColor: active ? 'var(--accent)' : 'var(--border-2)',
-                          background: active ? 'var(--accent-dim)' : 'transparent',
-                          color: active ? 'var(--accent)' : 'var(--t2)',
-                          cursor: 'pointer',
-                          fontSize: 11,
-                          fontWeight: active ? 700 : 400,
-                        }}
+                        onClick={() => toggleWeekday(dow)}
+                        style={TOGGLE_BTN(active)}
                       >
                         {label}
                       </button>
@@ -433,24 +451,35 @@ export default function HabitsPage() {
               </div>
             )}
 
-            {/* Custom interval */}
-            {form.frequency === 'custom' && (
+            {/* Specific days of month */}
+            {form.freqType === 'monthly' && (
               <div>
-                <label style={fieldLabel}>Every N days</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={365}
-                  value={form.intervalDays}
-                  onChange={(e) => setForm((f) => ({ ...f, intervalDays: Number(e.target.value) }))}
-                  style={{ width: 80 }}
-                />
+                <label style={fieldLabel}>Days of month</label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, maxWidth: 320 }}>
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => {
+                    const active = form.daysOfMonth.includes(day);
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        onClick={() => toggleDayOfMonth(day)}
+                        style={{
+                          ...TOGGLE_BTN(active),
+                          width: '100%',
+                          fontSize: 12,
+                        }}
+                      >
+                        {day}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
             {/* Target time */}
             <div>
-              <label style={fieldLabel}>Target time (optional)</label>
+              <label style={fieldLabel}>At what time? (optional)</label>
               <input
                 type="time"
                 value={form.targetTime}
@@ -466,17 +495,11 @@ export default function HabitsPage() {
               type="submit"
               disabled={submitting}
               style={{
-                padding: '10px 16px',
-                borderRadius: 'var(--r)',
-                background: 'var(--accent)',
-                color: 'var(--accent-text)',
-                border: 'none',
-                cursor: submitting ? 'default' : 'pointer',
+                padding: '10px 16px', borderRadius: 'var(--r)',
+                background: 'var(--accent)', color: 'var(--accent-text)',
+                border: 'none', cursor: submitting ? 'default' : 'pointer',
                 opacity: submitting ? 0.5 : 1,
-                fontSize: 13,
-                fontWeight: 600,
-                minHeight: 44,
-                letterSpacing: '0.03em',
+                fontSize: 13, fontWeight: 600, minHeight: 44, letterSpacing: '0.03em',
               }}
             >
               {submitting ? 'Saving…' : editingId ? 'Save changes' : 'Create habit'}
@@ -502,30 +525,25 @@ export default function HabitsPage() {
             <div
               style={{
                 fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
-                textTransform: 'uppercase', color: 'var(--t2)',
-                marginBottom: 10,
+                textTransform: 'uppercase', color: 'var(--t2)', marginBottom: 10,
               }}
             >
               Today — {new Date().toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}
             </div>
 
             {/* Progress bar */}
-            {dueToday.length > 0 && (
-              <div style={{ height: 3, background: 'var(--bg-3)', borderRadius: 2, marginBottom: 12, overflow: 'hidden' }}>
-                <div
-                  style={{
-                    height: '100%',
-                    width: `${((doneToday.length / dueToday.length) * 100).toFixed(1)}%`,
-                    background: doneToday.length === dueToday.length ? 'var(--ok)' : 'var(--accent)',
-                    borderRadius: 2,
-                    transition: 'width 300ms ease',
-                  }}
-                />
-              </div>
-            )}
+            <div style={{ height: 3, background: 'var(--bg-3)', borderRadius: 2, marginBottom: 12, overflow: 'hidden' }}>
+              <div
+                style={{
+                  height: '100%',
+                  width: `${((doneToday.length / dueToday.length) * 100).toFixed(1)}%`,
+                  background: doneToday.length === dueToday.length ? 'var(--ok)' : 'var(--accent)',
+                  borderRadius: 2, transition: 'width 300ms ease',
+                }}
+              />
+            </div>
 
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {/* Pending first, then done */}
               {[...pendingToday, ...doneToday].map((habit) => {
                 const done = isCompletedOn(habit, today);
                 const streak = currentStreak(habit, today);
@@ -533,31 +551,20 @@ export default function HabitsPage() {
                   <li
                     key={habit.id}
                     style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 12,
-                      padding: '10px 12px',
-                      borderRadius: 'var(--r-md)',
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      padding: '10px 12px', borderRadius: 'var(--r-md)',
                       background: done ? 'var(--bg-2)' : 'var(--bg-1)',
                       border: `1px solid ${done ? 'var(--border)' : 'var(--border-2)'}`,
-                      transition: 'background 200ms, border-color 200ms',
                       cursor: 'pointer',
                     }}
                     onClick={() => handleToggle(habit)}
                   >
-                    {/* Checkbox */}
                     <div
                       style={{
-                        width: 22,
-                        height: 22,
-                        borderRadius: '50%',
+                        width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
                         border: `2px solid ${done ? 'var(--ok)' : 'var(--border-2)'}`,
                         background: done ? 'var(--ok)' : 'transparent',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                        transition: 'background 200ms, border-color 200ms',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
                       }}
                     >
                       {done && (
@@ -566,18 +573,12 @@ export default function HabitsPage() {
                         </svg>
                       )}
                     </div>
-
-                    {/* Title & meta */}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div
                         style={{
-                          fontSize: 14,
-                          color: done ? 'var(--t3)' : 'var(--t1)',
-                          fontWeight: done ? 400 : 500,
-                          textDecoration: done ? 'line-through' : 'none',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
+                          fontSize: 14, color: done ? 'var(--t3)' : 'var(--t1)',
+                          fontWeight: done ? 400 : 500, textDecoration: done ? 'line-through' : 'none',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                         }}
                       >
                         {habit.title}
@@ -604,8 +605,7 @@ export default function HabitsPage() {
             <div
               style={{
                 fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
-                textTransform: 'uppercase', color: 'var(--t2)',
-                marginBottom: 10,
+                textTransform: 'uppercase', color: 'var(--t2)', marginBottom: 10,
               }}
             >
               All habits
@@ -614,14 +614,12 @@ export default function HabitsPage() {
               {habits.map((habit) => {
                 const streak = currentStreak(habit, today);
                 const longest = longestStreak(habit);
-                const totalDone = new Set(habit.completionLog).size;
-                const isDue = isDueOn(habit, today);
+                const totalDone = new Set(habit.completionLog.map(completionDateStr)).size;
+                const isDue = isDueToday(habit, today);
 
                 return (
                   <li key={habit.id} style={CARD}>
-                    {/* Streak bar */}
                     <div style={{ height: 2, background: streak > 0 ? '#f59e0b' : 'var(--bg-3)' }} />
-
                     <div style={{ padding: '10px 12px' }}>
                       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
@@ -629,7 +627,7 @@ export default function HabitsPage() {
                             {habit.title}
                           </div>
                           <div style={{ fontSize: 11, color: 'var(--t2)', marginTop: 3, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            <span>{freqLabel(habit)}</span>
+                            <span>{freqLabel(habit.frequency)}</span>
                             {habit.targetTime && <span>⏱ {habit.targetTime}</span>}
                             {isDue && (
                               <span
@@ -644,17 +642,13 @@ export default function HabitsPage() {
                           </div>
                         </div>
 
-                        {/* Actions */}
                         <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
                           <button
                             onClick={() => openEdit(habit)}
                             style={{
-                              fontSize: 11, padding: '4px 8px',
-                              borderRadius: 'var(--r)',
-                              border: '1px solid var(--border-2)',
-                              background: 'transparent',
-                              color: 'var(--t2)',
-                              cursor: 'pointer', minHeight: 28,
+                              fontSize: 11, padding: '4px 8px', borderRadius: 'var(--r)',
+                              border: '1px solid var(--border-2)', background: 'transparent',
+                              color: 'var(--t2)', cursor: 'pointer', minHeight: 28,
                             }}
                           >
                             edit
@@ -662,12 +656,9 @@ export default function HabitsPage() {
                           <button
                             onClick={() => handleDelete(habit.id)}
                             style={{
-                              fontSize: 11, padding: '4px 8px',
-                              borderRadius: 'var(--r)',
-                              border: '1px solid transparent',
-                              background: 'transparent',
-                              color: 'var(--error)',
-                              cursor: 'pointer', minHeight: 28,
+                              fontSize: 11, padding: '4px 8px', borderRadius: 'var(--r)',
+                              border: '1px solid transparent', background: 'transparent',
+                              color: 'var(--error)', cursor: 'pointer', minHeight: 28,
                             }}
                           >
                             del
@@ -675,34 +666,21 @@ export default function HabitsPage() {
                         </div>
                       </div>
 
-                      {/* Streak stats */}
                       <div
                         style={{
                           display: 'flex', gap: 20, marginTop: 10,
-                          paddingTop: 8,
-                          borderTop: '1px solid var(--border)',
+                          paddingTop: 8, borderTop: '1px solid var(--border)',
                         }}
                       >
                         <StatChip
-                          value={streak}
-                          label="current streak"
+                          value={streak} label="current streak"
                           color={streak >= 7 ? '#f59e0b' : streak >= 3 ? 'var(--accent)' : 'var(--t2)'}
-                          suffix=" day"
-                          plural
+                          suffix=" day" plural
                         />
-                        <StatChip
-                          value={longest}
-                          label="longest streak"
-                          suffix=" day"
-                          plural
-                        />
-                        <StatChip
-                          value={totalDone}
-                          label="total completions"
-                        />
+                        <StatChip value={longest} label="longest streak" suffix=" day" plural />
+                        <StatChip value={totalDone} label="total completions" />
                       </div>
 
-                      {/* 7-day mini heatmap */}
                       <MiniHeatmap habit={habit} today={today} />
                     </div>
                   </li>
@@ -719,27 +697,16 @@ export default function HabitsPage() {
 // ─── StatChip ─────────────────────────────────────────────────────────────────
 
 function StatChip({
-  value,
-  label,
-  color,
-  suffix = '',
-  plural = false,
+  value, label, color, suffix = '', plural = false,
 }: {
-  value: number;
-  label: string;
-  color?: string;
-  suffix?: string;
-  plural?: boolean;
+  value: number; label: string; color?: string; suffix?: string; plural?: boolean;
 }) {
   return (
     <div>
       <div
         style={{
-          fontSize: 20,
-          fontWeight: 700,
-          lineHeight: 1,
-          color: color ?? 'var(--t1)',
-          letterSpacing: '-0.02em',
+          fontSize: 20, fontWeight: 700, lineHeight: 1,
+          color: color ?? 'var(--t1)', letterSpacing: '-0.02em',
           fontFamily: 'var(--ff-dm-sans, sans-serif)',
         }}
       >
@@ -753,34 +720,27 @@ function StatChip({
 // ─── MiniHeatmap (last 21 days) ───────────────────────────────────────────────
 
 function MiniHeatmap({ habit, today }: { habit: Habit; today: Date }) {
-  const completedSet = new Set(habit.completionLog);
+  const doneSet = new Set(habit.completionLog.map(completionDateStr));
   const days: { date: Date; done: boolean; due: boolean }[] = [];
   for (let i = 20; i >= 0; i--) {
     const d = startOfDay(addDays(today, -i));
-    days.push({ date: d, done: completedSet.has(toDateStr(d)), due: isDueOn(habit, d) });
+    days.push({ date: d, done: doneSet.has(toDateStr(d)), due: isDueToday(habit, d) });
   }
 
   return (
     <div style={{ marginTop: 10, display: 'flex', gap: 2, alignItems: 'flex-end' }}>
       {days.map((d, i) => {
         const isToday = i === 20;
-        let bg: string;
-        if (d.done) bg = 'var(--ok)';
-        else if (d.due) bg = 'var(--bg-3)';
-        else bg = 'transparent';
-
+        const bg = d.done ? 'var(--ok)' : d.due ? 'var(--bg-3)' : 'transparent';
         return (
           <div
             key={i}
             title={`${d.date.toLocaleDateString()} — ${d.done ? 'done' : d.due ? 'missed' : 'not due'}`}
             style={{
-              flex: 1,
-              height: d.done ? 16 : d.due ? 8 : 4,
-              borderRadius: 2,
-              background: bg,
+              flex: 1, height: d.done ? 16 : d.due ? 8 : 4,
+              borderRadius: 2, background: bg,
               outline: isToday ? '1.5px solid var(--accent)' : 'none',
-              outlineOffset: 1,
-              transition: 'height 200ms',
+              outlineOffset: 1, transition: 'height 200ms',
             }}
           />
         );

@@ -13,7 +13,7 @@
 import { createClient } from '@/lib/supabase';
 import { db, type Deletion } from '@/lib/db/dexie';
 import { useSyncStore } from '@/stores/syncStore';
-import type { Task, Workblock, TimerSession, Habit } from '@/types';
+import type { Task, Workblock, TimerSession, Habit, HabitFrequency } from '@/types';
 
 const LAST_USER_KEY = 'ff-last-synced-user';
 
@@ -58,8 +58,11 @@ interface SbTimerSession {
 }
 
 interface SbHabit {
-  id: string; user_id: string; title: string; frequency: string;
-  custom_days: number[] | null; target_time: string | null;
+  id: string; user_id: string; title: string;
+  /** Serialised JSON of HabitFrequency — legacy rows may be a plain string */
+  frequency: string;
+  custom_days: number[] | null; // kept for legacy reads; new rows send null
+  target_time: string | null;
   completion_log: string[]; created_at: string; updated_at: string;
 }
 
@@ -131,10 +134,26 @@ function sbToTimer(r: SbTimerSession): TimerSession {
   };
 }
 
+function parseHabitFrequency(raw: string, legacyCustomDays: number[] | null): HabitFrequency {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && 'type' in (parsed as object)) {
+      return parsed as HabitFrequency;
+    }
+  } catch { /* fall through to legacy handling */ }
+  // Legacy plain-string format from before v5
+  if (raw === 'daily') return { type: 'daily' };
+  if (raw === 'weekly') return { type: 'weekly', weekdays: legacyCustomDays ?? [] };
+  if (raw === 'custom') return { type: 'interval', every: legacyCustomDays?.[0] ?? 1 };
+  return { type: 'daily' };
+}
+
 function habitToSb(h: Habit, userId: string): SbHabit {
   return {
-    id: h.id, user_id: userId, title: h.title, frequency: h.frequency,
-    custom_days: h.customDays ?? null, target_time: h.targetTime ?? null,
+    id: h.id, user_id: userId, title: h.title,
+    frequency: JSON.stringify(h.frequency),
+    custom_days: null,
+    target_time: h.targetTime ?? null,
     completion_log: h.completionLog, created_at: h.createdAt, updated_at: h.updatedAt,
   };
 }
@@ -142,8 +161,7 @@ function habitToSb(h: Habit, userId: string): SbHabit {
 function sbToHabit(r: SbHabit): Habit {
   return {
     id: r.id, title: r.title,
-    frequency: r.frequency as Habit['frequency'],
-    customDays: r.custom_days ?? undefined,
+    frequency: parseHabitFrequency(r.frequency, r.custom_days),
     targetTime: r.target_time ?? undefined,
     completionLog: r.completion_log ?? [],
     createdAt: r.created_at, updatedAt: r.updated_at,
