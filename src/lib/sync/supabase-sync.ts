@@ -162,6 +162,20 @@ function reportError(e: unknown) {
   useSyncStore.getState().setError(`Sync error: ${msg}`);
 }
 
+/** Fetch the signed-in user's profile username and push it into the sync store. */
+export async function loadUsername(): Promise<void> {
+  const { userId } = useSyncStore.getState();
+  if (!userId) return;
+  try {
+    const { data, error } = await createClient()
+      .from('profiles').select('username').eq('id', userId).maybeSingle();
+    if (error) throw error;
+    useSyncStore.getState().setUsername(data?.username ?? null);
+  } catch {
+    // Non-fatal: username is cosmetic. Leave it null.
+  }
+}
+
 // ─── full bidirectional sync ─────────────────────────────────────────────────
 
 export async function syncAll(userId: string): Promise<void> {

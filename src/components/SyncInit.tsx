@@ -8,30 +8,30 @@
 import { useEffect } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useSyncStore } from '@/stores/syncStore';
-import { syncAll } from '@/lib/sync/supabase-sync';
+import { syncAll, loadUsername } from '@/lib/sync/supabase-sync';
 
 export function SyncInit() {
   useEffect(() => {
     const supabase = createClient();
 
+    const onSignedIn = (user: { id: string; email?: string }) => {
+      useSyncStore.getState().setUser(user.id, user.email ?? null);
+      syncAll(user.id).then(() => loadUsername());
+    };
+
     // Check existing session on mount
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) {
-        const { user } = data.session;
-        useSyncStore.getState().setUser(user.id, user.email ?? null);
-        syncAll(user.id);
-      }
+      if (data.session) onSignedIn(data.session.user);
     });
 
     // Listen for future auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
         if (session) {
-          const { user } = session;
-          useSyncStore.getState().setUser(user.id, user.email ?? null);
-          syncAll(user.id);
+          onSignedIn(session.user);
         } else {
           useSyncStore.getState().setUser(null, null);
+          useSyncStore.getState().setUsername(null);
         }
       },
     );

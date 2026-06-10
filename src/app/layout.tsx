@@ -2,10 +2,9 @@ import type { Metadata, Viewport } from 'next';
 import { DM_Sans } from 'next/font/google';
 import './globals.css';
 import { ThemeProvider } from '@/components/ThemeProvider';
-import { Nav } from '@/components/Nav';
-import { BackupReminderBanner } from '@/components/BackupReminderBanner';
 import { SyncInit } from '@/components/SyncInit';
-import { SyncStatusBar } from '@/components/SyncStatusBar';
+import { AuthGuard } from '@/components/AuthGuard';
+import { AppFrame } from '@/components/AppFrame';
 
 const dmSans = DM_Sans({
   subsets: ['latin'],
@@ -50,10 +49,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ThemeProvider>
           <SyncInit />
-          <BackupReminderBanner />
-          <Nav />
-          {children}
-          <SyncStatusBar />
+          <AuthGuard>
+            <AppFrame>{children}</AppFrame>
+          </AuthGuard>
         </ThemeProvider>
       </body>
     </html>

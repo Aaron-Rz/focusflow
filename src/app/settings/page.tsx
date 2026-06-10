@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import { useSyncStore } from '@/stores/syncStore';
-import { syncAll, clearLocalData } from '@/lib/sync/supabase-sync';
+import { syncAll, clearLocalData, loadUsername } from '@/lib/sync/supabase-sync';
 import { ThemeToggleButton } from '@/components/ThemeToggleButton';
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -28,7 +28,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 export default function SettingsPage() {
   const router = useRouter();
-  const { userId, userEmail, syncing, lastSyncedAt, error } = useSyncStore();
+  const { userId, userEmail, username, syncing, lastSyncedAt, error } = useSyncStore();
   const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
@@ -39,20 +39,22 @@ export default function SettingsPage() {
           data.session.user.id,
           data.session.user.email ?? null,
         );
+        loadUsername();
       }
     });
   }, []);
 
   const handleSignOut = async () => {
     setSigningOut(true);
-    // 1. End the Supabase session (clears the auth cookie).
+    // 1. End the Supabase session (clears the persisted session).
     await createClient().auth.signOut();
     // 2. Wipe ALL local data so the next person on this device can't see or
     //    accidentally upload the previous account's tasks/habits/etc.
     await clearLocalData();
     useSyncStore.getState().setUser(null, null);
+    useSyncStore.getState().setUsername(null);
     // 3. Hard reload to reset all in-memory Zustand stores to empty.
-    window.location.assign('/');
+    window.location.assign('/auth/login');
   };
 
   const handleManualSync = () => {
@@ -120,6 +122,13 @@ export default function SettingsPage() {
           >
             {userId ? (
               <>
+                {username && (
+                  <Row label="Username">
+                    <span style={{ fontSize: 13, color: 'var(--t1)', fontWeight: 600 }}>
+                      {username}
+                    </span>
+                  </Row>
+                )}
                 <Row label="Signed in as">
                   <span style={{ fontSize: 13, color: 'var(--t1)', fontWeight: 500 }}>
                     {userEmail ?? userId}
@@ -157,7 +166,7 @@ export default function SettingsPage() {
                   Sign in to sync your data across devices.
                 </p>
                 <button
-                  onClick={() => router.push('/login')}
+                  onClick={() => router.push('/auth/login')}
                   style={{
                     padding: '8px 16px',
                     borderRadius: 'var(--r)',
@@ -170,7 +179,7 @@ export default function SettingsPage() {
                     minHeight: 36,
                   }}
                 >
-                  Sign in with magic link
+                  Sign in
                 </button>
               </div>
             )}
