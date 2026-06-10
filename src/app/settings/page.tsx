@@ -4,8 +4,21 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import { useSyncStore } from '@/stores/syncStore';
-import { syncAll, clearLocalData, loadUsername } from '@/lib/sync/supabase-sync';
+import { clearLocalData, loadUsername } from '@/lib/sync/supabase-sync';
+import { triggerSync } from '@/lib/sync/autoSync';
 import { ThemeToggleButton } from '@/components/ThemeToggleButton';
+
+function relativeTime(isoString: string): string {
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins === 1) return '1 min ago';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs === 1) return '1 hr ago';
+  if (hrs < 24) return `${hrs} hrs ago`;
+  return 'over a day ago';
+}
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -28,11 +41,11 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 export default function SettingsPage() {
   const router = useRouter();
-  const { userId, userEmail, username, syncing, lastSyncedAt, error } = useSyncStore();
+  const { userId, userEmail, username, syncing, syncStatus, lastSyncedAt, error } = useSyncStore();
   const [signingOut, setSigningOut] = useState(false);
+  const [, setTick] = useState(0);
 
   useEffect(() => {
-    // Refresh user info from session (in case store hasn't hydrated yet)
     createClient().auth.getSession().then(({ data }) => {
       if (data.session) {
         useSyncStore.getState().setUser(
@@ -42,6 +55,12 @@ export default function SettingsPage() {
         loadUsername();
       }
     });
+  }, []);
+
+  // Re-render every 30s so relative time ("2 min ago") stays current
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(id);
   }, []);
 
   const handleSignOut = async () => {
@@ -58,17 +77,14 @@ export default function SettingsPage() {
   };
 
   const handleManualSync = () => {
-    if (userId) syncAll(userId);
+    if (userId) triggerSync();
   };
 
-  const fmtDate = (iso: string | null) => {
-    if (!iso) return 'never';
-    const d = new Date(iso);
-    return d.toLocaleString([], {
-      month: 'short', day: 'numeric',
-      hour: '2-digit', minute: '2-digit',
-    });
-  };
+  const syncedLabel = (() => {
+    if (syncStatus === 'syncing') return null;
+    if (!lastSyncedAt) return 'never';
+    return relativeTime(lastSyncedAt);
+  })();
 
   return (
     <div style={{ background: 'var(--bg)', minHeight: '100dvh' }}>
@@ -206,16 +222,31 @@ export default function SettingsPage() {
               }}
             >
               <Row label="Last synced">
-                <span style={{ fontSize: 13, color: 'var(--t1)' }}>
-                  {syncing ? (
-                    <span style={{ color: 'var(--accent)' }}>Syncing…</span>
-                  ) : (
-                    fmtDate(lastSyncedAt)
+                <span style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {syncStatus === 'syncing' && (
+                    <span
+                      className="ff-spin"
+                      style={{
+                        width: 10, height: 10, borderRadius: '50%',
+                        border: '1.5px solid var(--accent)',
+                        borderTopColor: 'transparent',
+                        display: 'inline-block', flexShrink: 0,
+                      }}
+                    />
                   )}
+                  <span style={{
+                    color: syncStatus === 'syncing' ? 'var(--accent)'
+                         : syncStatus === 'error'   ? 'var(--error)'
+                         : 'var(--t1)',
+                  }}>
+                    {syncStatus === 'syncing' ? 'Syncing…'
+                   : syncStatus === 'error'   ? 'Sync failed'
+                   : syncedLabel}
+                  </span>
                 </span>
               </Row>
               {error && (
-                <Row label="Last error">
+                <Row label="Error">
                   <span style={{ fontSize: 12, color: 'var(--error)', maxWidth: 220, textAlign: 'right' }}>
                     {error}
                   </span>
@@ -235,7 +266,8 @@ export default function SettingsPage() {
                     opacity: syncing ? 0.5 : 1,
                     fontSize: 13,
                     fontWeight: 600,
-                    minHeight: 36,
+                    minHeight: 44,
+                    touchAction: 'manipulation',
                   }}
                 >
                   {syncing ? 'Syncing…' : 'Sync now'}

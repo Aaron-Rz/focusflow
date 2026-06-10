@@ -9,8 +9,10 @@ import { useEffect } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useSyncStore } from '@/stores/syncStore';
 import { syncAll, loadUsername } from '@/lib/sync/supabase-sync';
+import { initAutoSync, cleanupAutoSync } from '@/lib/sync/autoSync';
 
 export function SyncInit() {
+  // Auth state + initial sync
   useEffect(() => {
     const supabase = createClient();
 
@@ -19,12 +21,10 @@ export function SyncInit() {
       syncAll(user.id).then(() => loadUsername());
     };
 
-    // Check existing session on mount
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) onSignedIn(data.session.user);
     });
 
-    // Listen for future auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
         if (session) {
@@ -37,6 +37,12 @@ export function SyncInit() {
     );
 
     return () => subscription.unsubscribe();
+  }, []);
+
+  // Auto-sync listeners (visibility, online, interval)
+  useEffect(() => {
+    initAutoSync();
+    return cleanupAutoSync;
   }, []);
 
   return null;

@@ -149,6 +149,14 @@ input[type="checkbox"] {
   border: 0;
 }
 
+/* ─── Sync spinner ─── */
+@keyframes ff-spin {
+  to { transform: rotate(360deg); }
+}
+.ff-spin {
+  animation: ff-spin 0.8s linear infinite;
+}
+
 /* ─── Task card done-state animation ─── */
 .task-done-text {
   text-decoration: line-through;

@@ -1,12 +1,16 @@
 import { create } from 'zustand';
 
+export type SyncStatus = 'idle' | 'syncing' | 'error';
+
 interface SyncStore {
   userId: string | null;
   userEmail: string | null;
   username: string | null;
   syncing: boolean;
+  syncStatus: SyncStatus;
   lastSyncedAt: string | null;
   error: string | null;
+  syncError: string | null;
 
   setUser: (id: string | null, email: string | null) => void;
   setUsername: (username: string | null) => void;
@@ -21,13 +25,18 @@ export const useSyncStore = create<SyncStore>((set) => ({
   userEmail: null,
   username: null,
   syncing: false,
+  syncStatus: 'idle',
   lastSyncedAt: null,
   error: null,
+  syncError: null,
 
   setUser: (id, email) => set({ userId: id, userEmail: email }),
   setUsername: (username) => set({ username }),
-  setSyncing: (v) => set({ syncing: v }),
-  setLastSyncedAt: (at) => set({ lastSyncedAt: at }),
-  setError: (e) => set({ error: e }),
-  clearError: () => set({ error: null }),
+  setSyncing: (v) => set((s) => ({
+    syncing: v,
+    syncStatus: v ? 'syncing' : (s.error ? 'error' : 'idle'),
+  })),
+  setLastSyncedAt: (at) => set({ lastSyncedAt: at, syncStatus: 'idle' }),
+  setError: (e) => set({ error: e, syncError: e, syncStatus: e ? 'error' : 'idle' }),
+  clearError: () => set({ error: null, syncError: null, syncStatus: 'idle' }),
 }));
