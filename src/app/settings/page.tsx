@@ -1,12 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import { useSyncStore } from '@/stores/syncStore';
 import { clearLocalData, loadUsername } from '@/lib/sync/supabase-sync';
 import { triggerSync } from '@/lib/sync/autoSync';
 import { ThemeToggleButton } from '@/components/ThemeToggleButton';
+import { exportToJSON, importFromJSON } from '@/lib/db/backup';
+import { downloadFile } from '@/lib/utils/download';
 
 function relativeTime(isoString: string): string {
   const diffMs = Date.now() - new Date(isoString).getTime();
@@ -44,6 +46,10 @@ export default function SettingsPage() {
   const { userId, userEmail, username, syncing, syncStatus, lastSyncedAt, error } = useSyncStore();
   const [signingOut, setSigningOut] = useState(false);
   const [, setTick] = useState(0);
+  const [exportStatus, setExportStatus] = useState<'idle' | 'exporting'>('idle');
+  const [importStatus, setImportStatus] = useState<'idle' | 'importing' | 'done' | 'error'>('idle');
+  const [importError, setImportError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     createClient().auth.getSession().then(({ data }) => {
@@ -85,6 +91,33 @@ export default function SettingsPage() {
     if (!lastSyncedAt) return 'never';
     return relativeTime(lastSyncedAt);
   })();
+
+  const handleExport = async () => {
+    setExportStatus('exporting');
+    try {
+      const json = await exportToJSON();
+      downloadFile(json, `focusflow-backup-${new Date().toISOString().slice(0, 10)}.json`, 'application/json');
+    } finally {
+      setExportStatus('idle');
+    }
+  };
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportStatus('importing');
+    setImportError('');
+    try {
+      const text = await file.text();
+      await importFromJSON(text);
+      setImportStatus('done');
+      setTimeout(() => setImportStatus('idle'), 3000);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : 'Invalid backup file');
+      setImportStatus('error');
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   return (
     <div style={{ background: 'var(--bg)', minHeight: '100dvh' }}>
@@ -297,6 +330,87 @@ export default function SettingsPage() {
           >
             <Row label="Theme">
               <ThemeToggleButton />
+            </Row>
+          </div>
+        </section>
+
+        {/* ── Data & Backup ── */}
+        <section style={{ marginBottom: 32 }}>
+          <div
+            style={{
+              fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
+              textTransform: 'uppercase', color: 'var(--t2)', marginBottom: 4,
+            }}
+          >
+            Data &amp; Backup
+          </div>
+          <div
+            style={{
+              background: 'var(--bg-1)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--r-md)',
+              padding: '0 16px',
+            }}
+          >
+            <Row label="Export all data">
+              <button
+                onClick={handleExport}
+                disabled={exportStatus === 'exporting'}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 'var(--r)',
+                  border: '1px solid var(--accent)',
+                  background: 'transparent',
+                  color: 'var(--accent)',
+                  cursor: exportStatus === 'exporting' ? 'default' : 'pointer',
+                  opacity: exportStatus === 'exporting' ? 0.5 : 1,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  minHeight: 36,
+                }}
+              >
+                {exportStatus === 'exporting' ? 'Exporting…' : 'Export JSON'}
+              </button>
+            </Row>
+            <Row label="Restore from backup">
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleImportFile}
+                  style={{ display: 'none' }}
+                  id="backup-file-input"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={importStatus === 'importing'}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: 'var(--r)',
+                    border: '1px solid var(--border-2)',
+                    background: 'transparent',
+                    color: importStatus === 'done' ? 'var(--ok)' : 'var(--t1)',
+                    cursor: importStatus === 'importing' ? 'default' : 'pointer',
+                    opacity: importStatus === 'importing' ? 0.5 : 1,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    minHeight: 36,
+                  }}
+                >
+                  {importStatus === 'importing' ? 'Restoring…'
+                   : importStatus === 'done'     ? '✓ Restored'
+                   : 'Import JSON'}
+                </button>
+                {importStatus === 'error' && (
+                  <span style={{ fontSize: 11, color: 'var(--error)', maxWidth: 200, textAlign: 'right' }}>
+                    {importError || 'Import failed'}
+                  </span>
+                )}
+                <span style={{ fontSize: 11, color: 'var(--t3)', maxWidth: 200, textAlign: 'right', lineHeight: 1.3 }}>
+                  Replaces all local data — back up first.
+                </span>
+              </div>
             </Row>
           </div>
         </section>
