@@ -13,7 +13,7 @@
 import { createClient } from '@/lib/supabase';
 import { db, type Deletion } from '@/lib/db/dexie';
 import { useSyncStore } from '@/stores/syncStore';
-import type { Task, Workblock, TimerSession, Habit, HabitFrequency } from '@/types';
+import type { Task, Workblock, TimerSession, HabitFrequency } from '@/types';
 
 const LAST_USER_KEY = 'ff-last-synced-user';
 
@@ -30,7 +30,6 @@ export async function clearLocalData(): Promise<void> {
     db.tasks.clear(),
     db.workblocks.clear(),
     db.timerSessions.clear(),
-    db.habits.clear(),
     db.deletions.clear(),
   ]);
   try { localStorage.removeItem(LAST_USER_KEY); } catch {}
@@ -43,6 +42,11 @@ interface SbTask {
   importance: number; cog_load: number; deadline: string | null;
   category: string | null; parent_id: string | null; depends_on_id: string | null;
   status: string; created_at: string; completed_at: string | null; updated_at: string;
+  // habit fields (columns may not exist on older Supabase schemas — nullable)
+  is_habit?: boolean | null;
+  habit_frequency?: string | null;
+  habit_completion_log?: string[] | null;
+  target_time?: string | null;
 }
 
 interface SbWorkblock {
@@ -57,14 +61,6 @@ interface SbTimerSession {
   ended_at: string | null; paused_ms: number; updated_at: string;
 }
 
-interface SbHabit {
-  id: string; user_id: string; title: string;
-  /** Serialised JSON of HabitFrequency — legacy rows may be a plain string */
-  frequency: string;
-  custom_days: number[] | null; // kept for legacy reads; new rows send null
-  target_time: string | null;
-  completion_log: string[]; created_at: string; updated_at: string;
-}
 
 // ─── mappers ─────────────────────────────────────────────────────────────────
 
@@ -76,10 +72,18 @@ function taskToSb(t: Task, userId: string): SbTask {
     parent_id: t.parentId ?? null, depends_on_id: t.dependsOnId ?? null,
     status: t.status, created_at: t.createdAt,
     completed_at: t.completedAt ?? null, updated_at: t.updatedAt,
+    is_habit: t.isHabit ?? null,
+    habit_frequency: t.habitFrequency ? JSON.stringify(t.habitFrequency) : null,
+    habit_completion_log: t.habitCompletionLog ?? null,
+    target_time: t.targetTime ?? null,
   };
 }
 
 function sbToTask(r: SbTask): Task {
+  let habitFrequency: Task['habitFrequency'];
+  if (r.habit_frequency) {
+    try { habitFrequency = JSON.parse(r.habit_frequency) as Task['habitFrequency']; } catch { /* ignore */ }
+  }
   return {
     id: r.id, title: r.title,
     effortMin: r.effort_min,
@@ -90,6 +94,10 @@ function sbToTask(r: SbTask): Task {
     status: r.status as Task['status'],
     createdAt: r.created_at, completedAt: r.completed_at ?? undefined,
     updatedAt: r.updated_at,
+    isHabit: r.is_habit ?? undefined,
+    habitFrequency,
+    habitCompletionLog: r.habit_completion_log ?? undefined,
+    targetTime: r.target_time ?? undefined,
   };
 }
 
@@ -134,39 +142,6 @@ function sbToTimer(r: SbTimerSession): TimerSession {
   };
 }
 
-function parseHabitFrequency(raw: string, legacyCustomDays: number[] | null): HabitFrequency {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && 'type' in (parsed as object)) {
-      return parsed as HabitFrequency;
-    }
-  } catch { /* fall through to legacy handling */ }
-  // Legacy plain-string format from before v5
-  if (raw === 'daily') return { type: 'daily' };
-  if (raw === 'weekly') return { type: 'weekly', weekdays: legacyCustomDays ?? [] };
-  if (raw === 'custom') return { type: 'interval', every: legacyCustomDays?.[0] ?? 1 };
-  return { type: 'daily' };
-}
-
-function habitToSb(h: Habit, userId: string): SbHabit {
-  return {
-    id: h.id, user_id: userId, title: h.title,
-    frequency: JSON.stringify(h.frequency),
-    custom_days: null,
-    target_time: h.targetTime ?? null,
-    completion_log: h.completionLog, created_at: h.createdAt, updated_at: h.updatedAt,
-  };
-}
-
-function sbToHabit(r: SbHabit): Habit {
-  return {
-    id: r.id, title: r.title,
-    frequency: parseHabitFrequency(r.frequency, r.custom_days),
-    targetTime: r.target_time ?? undefined,
-    completionLog: r.completion_log ?? [],
-    createdAt: r.created_at, updatedAt: r.updated_at,
-  };
-}
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -226,7 +201,6 @@ export async function syncAll(userId: string): Promise<void> {
       syncTable_tasks(supabase, userId, tombstoned),
       syncTable_workblocks(supabase, userId, tombstoned),
       syncTable_timerSessions(supabase, userId, tombstoned),
-      syncTable_habits(supabase, userId, tombstoned),
     ]);
 
     // Push any local tombstones the server hasn't seen yet.
@@ -256,7 +230,7 @@ async function applyRemoteDeletions(
       case 'tasks':          await db.tasks.delete(r.id); break;
       case 'workblocks':     await db.workblocks.delete(r.id); break;
       case 'timer_sessions': await db.timerSessions.delete(r.id); break;
-      case 'habits':         await db.habits.delete(r.id); break;
+      case 'habits':         /* habits are now tasks — tombstone handled via tasks */ break;
     }
   }
 }
@@ -283,7 +257,7 @@ async function pushLocalDeletions(
   if (upErr) throw upErr;
 
   // Hard-delete the corresponding rows remotely, grouped by entity.
-  for (const entity of ['tasks', 'workblocks', 'timer_sessions', 'habits'] as const) {
+  for (const entity of ['tasks', 'workblocks', 'timer_sessions'] as const) {
     const ids = missing.filter((d) => d.entity === entity).map((d) => d.id);
     if (ids.length) {
       const { error: delErr } = await supabase
@@ -414,42 +388,6 @@ async function syncTable_timerSessions(
   }
 }
 
-async function syncTable_habits(
-  supabase: ReturnType<typeof createClient>,
-  userId: string,
-  tombstoned: Set<string>,
-): Promise<void> {
-  const { data: remoteRows, error } = await supabase
-    .from('habits')
-    .select('*')
-    .eq('user_id', userId);
-  if (error) throw error;
-
-  const remoteMap = new Map((remoteRows as SbHabit[]).map((r) => [r.id, r]));
-  const localRows = await db.habits.toArray();
-  const localMap = new Map(localRows.map((h) => [h.id, h]));
-
-  for (const r of remoteRows as SbHabit[]) {
-    if (tombstoned.has(r.id)) continue;
-    const local = localMap.get(r.id);
-    if (!local || newer(r.updated_at, local.updatedAt)) {
-      await db.habits.put(sbToHabit(r));
-    }
-  }
-
-  const toUpsert: SbHabit[] = [];
-  for (const h of localRows) {
-    if (tombstoned.has(h.id)) continue;
-    const remote = remoteMap.get(h.id);
-    if (!remote || newer(h.updatedAt, remote.updated_at)) {
-      toUpsert.push(habitToSb(h, userId));
-    }
-  }
-  if (toUpsert.length) {
-    const { error: uErr } = await supabase.from('habits').upsert(toUpsert);
-    if (uErr) throw uErr;
-  }
-}
 
 // ─── per-write helpers (fire-and-forget) ─────────────────────────────────────
 
@@ -486,17 +424,6 @@ export async function syncUpsertTimerSession(s: TimerSession): Promise<void> {
   } catch (e) { reportError(e); }
 }
 
-export async function syncUpsertHabit(h: Habit): Promise<void> {
-  const { userId } = useSyncStore.getState();
-  if (!userId) return;
-  try {
-    const { error } = await createClient()
-      .from('habits')
-      .upsert(habitToSb(h, userId));
-    if (error) throw error;
-  } catch (e) { reportError(e); }
-}
-
 /**
  * Record a deletion as a local tombstone, then (if logged in) propagate it:
  * push the tombstone to Supabase and hard-delete the remote row. The local
@@ -528,10 +455,6 @@ export function syncDeleteTask(id: string): Promise<void> {
 
 export function syncDeleteWorkblock(id: string): Promise<void> {
   return recordAndSyncDelete('workblocks', id);
-}
-
-export function syncDeleteHabit(id: string): Promise<void> {
-  return recordAndSyncDelete('habits', id);
 }
 
 /** Delete a timer session everywhere (tombstoned). */

@@ -6,7 +6,8 @@ import { useFilterStore } from '@/stores/filterStore';
 import { rankTasks } from '@/lib/algorithm/score';
 import { effectiveEffortMin } from '@/lib/algorithm/dependencies';
 import { getDistinctCategories } from '@/lib/utils/categories';
-import type { Importance, CogLoad, Task } from '@/types';
+import type { Importance, CogLoad, Task, HabitFrequency } from '@/types';
+import { isDueToday } from '@/lib/habits/schedule';
 import { TaskTimer } from '@/components/TaskTimer';
 import { PomodoroTimer } from '@/components/PomodoroTimer';
 import { ThemeToggleButton } from '@/components/ThemeToggleButton';
@@ -52,7 +53,10 @@ function Label({ children, style }: { children: React.ReactNode; style?: React.C
 interface TaskFormInput {
   title: string; effortMin: number; importance: Importance; cogLoad: CogLoad;
   deadline?: string; category?: string; dependsOnId?: string; parentId?: string;
+  isHabit?: boolean; habitFrequency?: HabitFrequency; targetTime?: string;
 }
+
+type FreqType = 'daily' | 'interval' | 'weekly' | 'monthly';
 
 interface AddTaskFormProps {
   parentId?: string;
@@ -72,13 +76,45 @@ function AddTaskForm({ parentId, tasks, onAdd, onEdit, initialValues, onCancel, 
   const [cogLoad, setCogLoad]     = useState<CogLoad>(initialValues?.cogLoad ?? 2);
   const [deadline, setDeadline]   = useState(
     initialValues?.deadline
-      ? initialValues.deadline.slice(0, 16) // trim to datetime-local format
+      ? initialValues.deadline.slice(0, 16)
       : ''
   );
   const [category, setCategory]   = useState(initialValues?.category ?? '');
   const [dependsOnId, setDependsOnId] = useState(initialValues?.dependsOnId ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]         = useState('');
+
+  // habit fields
+  const [isHabit, setIsHabit]         = useState(initialValues?.isHabit ?? false);
+  const [freqType, setFreqType]       = useState<FreqType>(
+    (initialValues?.habitFrequency?.type as FreqType) ?? 'daily'
+  );
+  const [intervalDays, setIntervalDays] = useState(
+    initialValues?.habitFrequency?.type === 'interval' ? initialValues.habitFrequency.every : 2
+  );
+  const [weekdays, setWeekdays]       = useState<number[]>(
+    initialValues?.habitFrequency?.type === 'weekly' ? initialValues.habitFrequency.weekdays : []
+  );
+  const [daysOfMonth, setDaysOfMonth] = useState<number[]>(
+    initialValues?.habitFrequency?.type === 'monthly' ? initialValues.habitFrequency.daysOfMonth : []
+  );
+  const [targetTime, setTargetTime]   = useState(initialValues?.targetTime ?? '');
+
+  function buildHabitFrequency(): HabitFrequency {
+    switch (freqType) {
+      case 'daily':   return { type: 'daily' };
+      case 'interval': return { type: 'interval', every: intervalDays };
+      case 'weekly':  return { type: 'weekly', weekdays };
+      case 'monthly': return { type: 'monthly', daysOfMonth };
+    }
+  }
+
+  function toggleWeekday(dow: number) {
+    setWeekdays((prev) => prev.includes(dow) ? prev.filter((d) => d !== dow) : [...prev, dow]);
+  }
+  function toggleDayOfMonth(day: number) {
+    setDaysOfMonth((prev) => prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]);
+  }
 
   const isEditMode = !!onEdit;
 
@@ -93,12 +129,30 @@ function AddTaskForm({ parentId, tasks, onAdd, onEdit, initialValues, onCancel, 
     if (!title.trim()) return;
     setError('');
     setSubmitting(true);
+    if (isHabit && freqType === 'weekly' && weekdays.length === 0) {
+      setError('Choose at least one day of the week.');
+      setSubmitting(false);
+      return;
+    }
+    if (isHabit && freqType === 'monthly' && daysOfMonth.length === 0) {
+      setError('Choose at least one day of the month.');
+      setSubmitting(false);
+      return;
+    }
+    if (isHabit && freqType === 'interval' && intervalDays < 2) {
+      setError('Interval must be at least 2 days.');
+      setSubmitting(false);
+      return;
+    }
     const input: TaskFormInput = {
       title: title.trim(), effortMin, importance, cogLoad,
       deadline: deadline || undefined,
       category: category.trim() || undefined,
       dependsOnId: dependsOnId || undefined,
       parentId: effectiveParentId,
+      isHabit: isHabit || undefined,
+      habitFrequency: isHabit ? buildHabitFrequency() : undefined,
+      targetTime: isHabit && targetTime ? targetTime : undefined,
     };
     const handler = isEditMode ? onEdit! : onAdd!;
     const err = await handler(input);
@@ -259,6 +313,121 @@ function AddTaskForm({ parentId, tasks, onAdd, onEdit, initialValues, onCancel, 
           </select>
         </div>
       )}
+
+      {/* Habit toggle */}
+      <div
+        style={{
+          border: '1px solid var(--border-2)', borderRadius: 'var(--r)',
+          padding: '10px 12px', background: 'var(--bg-2)',
+        }}
+      >
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+          <input
+            type="checkbox"
+            checked={isHabit}
+            onChange={(e) => setIsHabit(e.target.checked)}
+            style={{ width: 16, height: 16 }}
+          />
+          <span style={{ fontSize: 13, color: 'var(--t1)', fontWeight: 500 }}>This is a recurring habit</span>
+        </label>
+        {isHabit && (
+          <div style={{ marginTop: 10, paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {/* Frequency type */}
+            <div>
+              <label style={fieldLabel}>Frequency</label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {(
+                  [
+                    { key: 'daily', label: 'Daily' },
+                    { key: 'interval', label: 'Every N days' },
+                    { key: 'weekly', label: 'Weekdays' },
+                    { key: 'monthly', label: 'Days of month' },
+                  ] as { key: FreqType; label: string }[]
+                ).map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => setFreqType(opt.key)}
+                    style={{
+                      padding: '5px 10px', borderRadius: 'var(--r)', border: '1px solid', fontSize: 12,
+                      borderColor: freqType === opt.key ? 'var(--accent)' : 'var(--border-2)',
+                      background: freqType === opt.key ? 'var(--accent-dim)' : 'transparent',
+                      color: freqType === opt.key ? 'var(--accent)' : 'var(--t2)',
+                      cursor: 'pointer', fontWeight: freqType === opt.key ? 700 : 400,
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {freqType === 'interval' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 12, color: 'var(--t2)' }}>Every</span>
+                <input
+                  type="number" min={2} max={30} value={intervalDays}
+                  onChange={(e) => setIntervalDays(Number(e.target.value))}
+                  style={{ width: 56 }}
+                />
+                <span style={{ fontSize: 12, color: 'var(--t2)' }}>days</span>
+              </div>
+            )}
+            {freqType === 'weekly' && (
+              <div>
+                <label style={fieldLabel}>Days of week</label>
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  {(['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] as const).map((label, i) => {
+                    const dow = [1,2,3,4,5,6,0][i];
+                    const active = weekdays.includes(dow);
+                    return (
+                      <button key={dow} type="button" onClick={() => toggleWeekday(dow)}
+                        style={{
+                          width: 38, height: 34, borderRadius: 'var(--r)', border: '1px solid', fontSize: 11,
+                          borderColor: active ? 'var(--accent)' : 'var(--border-2)',
+                          background: active ? 'var(--accent-dim)' : 'transparent',
+                          color: active ? 'var(--accent)' : 'var(--t2)', cursor: 'pointer',
+                          fontWeight: active ? 700 : 400,
+                        }}
+                      >{label}</button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {freqType === 'monthly' && (
+              <div>
+                <label style={fieldLabel}>Days of month</label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 3, maxWidth: 300 }}>
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => {
+                    const active = daysOfMonth.includes(day);
+                    return (
+                      <button key={day} type="button" onClick={() => toggleDayOfMonth(day)}
+                        style={{
+                          height: 30, borderRadius: 'var(--r)', border: '1px solid', fontSize: 11,
+                          borderColor: active ? 'var(--accent)' : 'var(--border-2)',
+                          background: active ? 'var(--accent-dim)' : 'transparent',
+                          color: active ? 'var(--accent)' : 'var(--t2)', cursor: 'pointer',
+                          fontWeight: active ? 700 : 400,
+                        }}
+                      >{day}</button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {/* Target time */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label style={{ ...fieldLabel, marginBottom: 0 }}>Time (optional)</label>
+              <input
+                type="time" value={targetTime}
+                onChange={(e) => setTargetTime(e.target.value)}
+                style={{ width: 130 }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Actions */}
       <div style={{ display: 'flex', gap: 8 }}>
         <button
@@ -598,7 +767,8 @@ function isChildBlocked(task: Task, allTasks: Task[]): boolean {
 /* ─── Home ─── */
 
 export default function Home() {
-  const { tasks, loading, loadTasks, addTask, updateTask, markDone, markOpen, setDependency } = useTaskStore();
+  const { tasks, loading, loadTasks, addTask, updateTask, markDone, markOpen, setDependency, completeHabit } = useTaskStore();
+  const today = new Date();
   const { activeCategories, toggleCategory, clearFilter } = useFilterStore();
   const [depError, setDepError]         = useState('');
   const [showAddForm, setShowAddForm]   = useState(false);
@@ -607,9 +777,17 @@ export default function Home() {
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
 
-  const now = new Date();
+  const now = today;
 
-  const openTasks = tasks.filter((t) => t.status !== 'done');
+  // habit tasks not due today are excluded from the ranked list
+  const openTasks = tasks.filter((t) => {
+    if (t.status === 'done') return false;
+    if (t.isHabit) return isDueToday(t, now);
+    return true;
+  });
+
+  // habit tasks not due today shown separately
+  const notDueHabits = tasks.filter((t) => t.isHabit && t.status !== 'done' && !isDueToday(t, now));
   const scorable  = openTasks.map((t) => ({ ...t, effortMin: effectiveEffortMin(t, tasks) }));
   const ranked    = rankTasks(scorable, now);
   const scoredById = new Map(
@@ -643,6 +821,15 @@ export default function Home() {
     .sort((a, b) => displayScore(b.id) - displayScore(a.id));
 
   const doneTasks = tasks.filter((t) => t.status === 'done' && !t.parentId);
+
+  const handleDone = async (id: string) => {
+    const task = tasks.find((t) => t.id === id);
+    if (task?.isHabit) {
+      await completeHabit(id);
+    } else {
+      await markDone(id);
+    }
+  };
 
   const handleSetDependency = async (taskId: string, value: string): Promise<void> => {
     setDepError('');
@@ -844,7 +1031,7 @@ export default function Home() {
                 depth={0}
                 tasks={tasks}
                 scoredById={scoredById}
-                onDone={markDone}
+                onDone={handleDone}
                 onOpen={markOpen}
                 onSetDep={handleSetDependency}
                 onAddTask={addTask}
@@ -855,6 +1042,35 @@ export default function Home() {
             );
           })}
         </ul>
+
+        {/* ── Habits not due today ── */}
+        {notDueHabits.length > 0 && (
+          <div style={{ marginTop: 20 }}>
+            <div style={{ ...sectionLabel, marginBottom: 8 }}>Habits — not due today</div>
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {notDueHabits.map((task) => (
+                <li
+                  key={task.id}
+                  style={{
+                    padding: '8px 12px', borderRadius: 'var(--r-md)',
+                    background: 'var(--bg-1)', border: '1px solid var(--border)',
+                    opacity: 0.55, display: 'flex', gap: 8, alignItems: 'center',
+                  }}
+                >
+                  <span style={{ fontSize: 13, color: 'var(--t2)', flex: 1 }}>{task.title}</span>
+                  {task.habitFrequency && (
+                    <span style={{ fontSize: 10, color: 'var(--t3)' }}>
+                      {task.habitFrequency.type === 'daily' ? 'daily'
+                        : task.habitFrequency.type === 'interval' ? `every ${task.habitFrequency.every}d`
+                        : task.habitFrequency.type === 'weekly' ? 'weekly'
+                        : 'monthly'}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* ── Pomodoro timer (collapsible) ── */}
         <div style={{ marginTop: 24 }}>

@@ -1,6 +1,7 @@
 // workblocks.ts — fill algorithm (flat + Pomodoro) + .ics export. No I/O; `now` injected.
 import { rankTasks } from '@/lib/algorithm/score';
 import { isReady, effectiveEffortMin } from '@/lib/algorithm/dependencies';
+import { isDueToday } from '@/lib/habits/schedule';
 import type { Task, Workblock, ScheduleSegment } from '@/types';
 
 export interface FilledWorkblock extends Workblock {
@@ -179,8 +180,14 @@ export function fillWorkblock(
 
   // Rank ready open tasks by score, optionally scoped to specific categories
   const catFilter = workblock.categoryFilter;
+  const includeHabits = workblock.includeHabits ?? false;
   const openTasks = allTasks.filter((t) => {
     if (t.status === 'done') return false;
+    // Habit tasks: only include if the toggle is on and the habit is due today
+    if (t.isHabit) {
+      if (!includeHabits) return false;
+      if (!isDueToday(t, startDate)) return false;
+    }
     if (catFilter && catFilter.length > 0) {
       return t.category != null && catFilter.includes(t.category);
     }

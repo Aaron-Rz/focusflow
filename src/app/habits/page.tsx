@@ -1,11 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { v4 as uuidv4 } from 'uuid';
-import { db } from '@/lib/db/dexie';
-import type { Habit, HabitFrequency } from '@/types';
+import { useState } from 'react';
+import { useTaskStore } from '@/stores/taskStore';
+import type { Task, HabitFrequency } from '@/types';
 import { ThemeToggleButton } from '@/components/ThemeToggleButton';
-import { syncUpsertHabit, syncDeleteHabit } from '@/lib/sync/supabase-sync';
 import { isDueToday, completionDateStr } from '@/lib/habits/schedule';
 
 // ─── date helpers ─────────────────────────────────────────────────────────────
@@ -29,16 +27,15 @@ function toDateStr(d: Date): string {
   return `${y}-${m}-${dd}`;
 }
 
-// ─── habit logic ─────────────────────────────────────────────────────────────
+// ─── habit-task helpers ───────────────────────────────────────────────────────
 
-/** Is the habit completed on a given calendar day? Handles both YYYY-MM-DD and full ISO entries. */
-function isCompletedOn(habit: Habit, day: Date): boolean {
+function isCompletedOn(task: Task, day: Date): boolean {
   const target = toDateStr(day);
-  return habit.completionLog.some((e) => completionDateStr(e) === target);
+  return (task.habitCompletionLog ?? []).some((e) => completionDateStr(e) === target);
 }
 
-function currentStreak(habit: Habit, today: Date): number {
-  const doneSet = new Set(habit.completionLog.map(completionDateStr));
+function currentStreak(task: Task, today: Date): number {
+  const doneSet = new Set((task.habitCompletionLog ?? []).map(completionDateStr));
   let streak = 0;
   let cursor = startOfDay(today);
   while (true) {
@@ -46,7 +43,6 @@ function currentStreak(habit: Habit, today: Date): number {
       streak++;
       cursor = addDays(cursor, -1);
     } else {
-      // Grace: allow today not yet checked without breaking streak
       if (streak === 0 && doneSet.has(toDateStr(addDays(cursor, -1)))) {
         cursor = addDays(cursor, -1);
         continue;
@@ -57,9 +53,10 @@ function currentStreak(habit: Habit, today: Date): number {
   return streak;
 }
 
-function longestStreak(habit: Habit): number {
-  if (!habit.completionLog.length) return 0;
-  const sorted = [...new Set(habit.completionLog.map(completionDateStr))].sort();
+function longestStreak(task: Task): number {
+  const log = task.habitCompletionLog ?? [];
+  if (!log.length) return 0;
+  const sorted = [...new Set(log.map(completionDateStr))].sort();
   let max = 1;
   let cur = 1;
   for (let i = 1; i < sorted.length; i++) {
@@ -125,6 +122,7 @@ type FreqType = 'daily' | 'interval' | 'weekly' | 'monthly';
 
 interface FormState {
   title: string;
+  effortMin: number;
   freqType: FreqType;
   intervalDays: number;
   weekdays: number[];
@@ -134,6 +132,7 @@ interface FormState {
 
 const BLANK_FORM: FormState = {
   title: '',
+  effortMin: 15,
   freqType: 'daily',
   intervalDays: 2,
   weekdays: [],
@@ -150,20 +149,24 @@ function toHabitFrequency(form: FormState): HabitFrequency {
   }
 }
 
-function fromHabitFrequency(f: HabitFrequency): Partial<FormState> {
+function fromTask(task: Task): Partial<FormState> {
+  const f = task.habitFrequency;
+  if (!f) return {};
+  const base: Partial<FormState> = { title: task.title, effortMin: task.effortMin, targetTime: task.targetTime ?? '' };
   switch (f.type) {
-    case 'daily': return { freqType: 'daily' };
-    case 'interval': return { freqType: 'interval', intervalDays: f.every };
-    case 'weekly': return { freqType: 'weekly', weekdays: f.weekdays };
-    case 'monthly': return { freqType: 'monthly', daysOfMonth: f.daysOfMonth };
+    case 'daily': return { ...base, freqType: 'daily' };
+    case 'interval': return { ...base, freqType: 'interval', intervalDays: f.every };
+    case 'weekly': return { ...base, freqType: 'weekly', weekdays: f.weekdays };
+    case 'monthly': return { ...base, freqType: 'monthly', daysOfMonth: f.daysOfMonth };
   }
 }
 
 // ─── HabitsPage ───────────────────────────────────────────────────────────────
 
 export default function HabitsPage() {
-  const [habits, setHabits] = useState<Habit[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { tasks, loading, addTask, updateTask, deleteTask, completeHabit, uncompleteHabit } = useTaskStore();
+  const habits = tasks.filter((t) => t.isHabit);
+
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(BLANK_FORM);
@@ -172,30 +175,18 @@ export default function HabitsPage() {
 
   const today = startOfDay(new Date());
 
-  const loadHabits = useCallback(async () => {
-    const all = await db.habits.toArray();
-    all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    setHabits(all);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { loadHabits(); }, [loadHabits]);
-
   const dueToday = habits.filter((h) => isDueToday(h, today));
   const doneToday = dueToday.filter((h) => isCompletedOn(h, today));
   const pendingToday = dueToday.filter((h) => !isCompletedOn(h, today));
 
   // ── checklist toggle ────────────────────────────────────────────────────
-  const handleToggle = async (habit: Habit) => {
-    const dateStr = toDateStr(today);
-    const alreadyDone = habit.completionLog.some((e) => completionDateStr(e) === dateStr);
-    const newLog = alreadyDone
-      ? habit.completionLog.filter((e) => completionDateStr(e) !== dateStr)
-      : [...habit.completionLog, new Date().toISOString()];
-    const updated: Habit = { ...habit, completionLog: newLog, updatedAt: new Date().toISOString() };
-    await db.habits.put(updated);
-    syncUpsertHabit(updated);
-    setHabits((prev) => prev.map((h) => (h.id === habit.id ? updated : h)));
+  const handleToggle = async (task: Task) => {
+    const done = isCompletedOn(task, today);
+    if (done) {
+      await uncompleteHabit(task.id);
+    } else {
+      await completeHabit(task.id);
+    }
   };
 
   // ── form helpers ────────────────────────────────────────────────────────
@@ -206,9 +197,9 @@ export default function HabitsPage() {
     setShowForm(true);
   };
 
-  const openEdit = (habit: Habit) => {
-    setEditingId(habit.id);
-    setForm({ ...BLANK_FORM, ...fromHabitFrequency(habit.frequency), title: habit.title, targetTime: habit.targetTime ?? '' });
+  const openEdit = (task: Task) => {
+    setEditingId(task.id);
+    setForm({ ...BLANK_FORM, ...fromTask(task) });
     setFormError('');
     setShowForm(true);
   };
@@ -230,45 +221,39 @@ export default function HabitsPage() {
     }
 
     setSubmitting(true);
-    const now = new Date().toISOString();
     const frequency = toHabitFrequency(form);
 
+    let err: string | null = null;
     if (editingId) {
-      const existing = habits.find((h) => h.id === editingId);
-      if (!existing) { setSubmitting(false); return; }
-      const updated: Habit = {
-        ...existing,
+      err = await updateTask(editingId, {
         title: form.title.trim(),
-        frequency,
+        effortMin: form.effortMin,
+        importance: 2,
+        cogLoad: 1,
+        isHabit: true,
+        habitFrequency: frequency,
         targetTime: form.targetTime || undefined,
-        updatedAt: now,
-      };
-      await db.habits.put(updated);
-      syncUpsertHabit(updated);
+      });
     } else {
-      const newHabit: Habit = {
-        id: uuidv4(),
+      err = await addTask({
         title: form.title.trim(),
-        frequency,
+        effortMin: form.effortMin,
+        importance: 2,
+        cogLoad: 1,
+        isHabit: true,
+        habitFrequency: frequency,
         targetTime: form.targetTime || undefined,
-        completionLog: [],
-        createdAt: now,
-        updatedAt: now,
-      };
-      await db.habits.add(newHabit);
-      syncUpsertHabit(newHabit);
+      });
     }
 
     setSubmitting(false);
+    if (err) { setFormError(err); return; }
     closeForm();
-    loadHabits();
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this habit and all its history?')) return;
-    await db.habits.delete(id);
-    syncDeleteHabit(id);
-    setHabits((prev) => prev.filter((h) => h.id !== id));
+    await deleteTask(id);
   };
 
   const toggleWeekday = (dow: number) => {
@@ -381,6 +366,19 @@ export default function HabitsPage() {
               />
             </div>
 
+            {/* Effort */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label style={{ ...fieldLabel, marginBottom: 0 }}>Effort</label>
+              <input
+                type="number"
+                min={1}
+                value={form.effortMin}
+                onChange={(e) => setForm((f) => ({ ...f, effortMin: Number(e.target.value) }))}
+                style={{ width: 64 }}
+              />
+              <span style={{ fontSize: 13, color: 'var(--t2)' }}>min</span>
+            </div>
+
             {/* Frequency type */}
             <div>
               <label style={fieldLabel}>Frequency</label>
@@ -434,7 +432,7 @@ export default function HabitsPage() {
                 <label style={fieldLabel}>Days of week</label>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const).map((label, i) => {
-                    const dow = [1, 2, 3, 4, 5, 6, 0][i]; // Mon=1…Sun=0
+                    const dow = [1, 2, 3, 4, 5, 6, 0][i];
                     const active = form.weekdays.includes(dow);
                     return (
                       <button
@@ -463,11 +461,7 @@ export default function HabitsPage() {
                         key={day}
                         type="button"
                         onClick={() => toggleDayOfMonth(day)}
-                        style={{
-                          ...TOGGLE_BTN(active),
-                          width: '100%',
-                          fontSize: 12,
-                        }}
+                        style={{ ...TOGGLE_BTN(active), width: '100%', fontSize: 12 }}
                       >
                         {day}
                       </button>
@@ -544,12 +538,12 @@ export default function HabitsPage() {
             </div>
 
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {[...pendingToday, ...doneToday].map((habit) => {
-                const done = isCompletedOn(habit, today);
-                const streak = currentStreak(habit, today);
+              {[...pendingToday, ...doneToday].map((task) => {
+                const done = isCompletedOn(task, today);
+                const streak = currentStreak(task, today);
                 return (
                   <li
-                    key={habit.id}
+                    key={task.id}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 12,
                       padding: '10px 12px', borderRadius: 'var(--r-md)',
@@ -557,7 +551,7 @@ export default function HabitsPage() {
                       border: `1px solid ${done ? 'var(--border)' : 'var(--border-2)'}`,
                       cursor: 'pointer',
                     }}
-                    onClick={() => handleToggle(habit)}
+                    onClick={() => handleToggle(task)}
                   >
                     <div
                       style={{
@@ -581,10 +575,10 @@ export default function HabitsPage() {
                           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                         }}
                       >
-                        {habit.title}
+                        {task.title}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 2, display: 'flex', gap: 8 }}>
-                        {habit.targetTime && <span>⏱ {habit.targetTime}</span>}
+                        {task.targetTime && <span>⏱ {task.targetTime}</span>}
                         {streak > 0 && (
                           <span style={{ color: streak >= 7 ? '#f59e0b' : 'var(--t3)' }}>
                             🔥 {streak} day{streak !== 1 ? 's' : ''}
@@ -611,32 +605,28 @@ export default function HabitsPage() {
               All habits
             </div>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {habits.map((habit) => {
-                const streak = currentStreak(habit, today);
-                const longest = longestStreak(habit);
-                const totalDone = new Set(habit.completionLog.map(completionDateStr)).size;
-                const isDue = isDueToday(habit, today);
+              {habits.map((task) => {
+                const streak = currentStreak(task, today);
+                const longest = longestStreak(task);
+                const totalDone = new Set((task.habitCompletionLog ?? []).map(completionDateStr)).size;
+                const isDue = isDueToday(task, today);
+                const done = isCompletedOn(task, today);
 
                 return (
-                  <li key={habit.id} style={CARD}>
+                  <li key={task.id} style={CARD}>
                     <div style={{ height: 2, background: streak > 0 ? '#f59e0b' : 'var(--bg-3)' }} />
                     <div style={{ padding: '10px 12px' }}>
                       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--t1)' }}>
-                            {habit.title}
+                            {task.title}
                           </div>
                           <div style={{ fontSize: 11, color: 'var(--t2)', marginTop: 3, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            <span>{freqLabel(habit.frequency)}</span>
-                            {habit.targetTime && <span>⏱ {habit.targetTime}</span>}
+                            {task.habitFrequency && <span>{freqLabel(task.habitFrequency)}</span>}
+                            {task.targetTime && <span>⏱ {task.targetTime}</span>}
                             {isDue && (
-                              <span
-                                style={{
-                                  color: isCompletedOn(habit, today) ? 'var(--ok)' : 'var(--accent)',
-                                  fontWeight: 600,
-                                }}
-                              >
-                                {isCompletedOn(habit, today) ? '✓ done today' : '• due today'}
+                              <span style={{ color: done ? 'var(--ok)' : 'var(--accent)', fontWeight: 600 }}>
+                                {done ? '✓ done today' : '• due today'}
                               </span>
                             )}
                           </div>
@@ -644,7 +634,7 @@ export default function HabitsPage() {
 
                         <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
                           <button
-                            onClick={() => openEdit(habit)}
+                            onClick={() => openEdit(task)}
                             style={{
                               fontSize: 11, padding: '4px 8px', borderRadius: 'var(--r)',
                               border: '1px solid var(--border-2)', background: 'transparent',
@@ -654,7 +644,7 @@ export default function HabitsPage() {
                             edit
                           </button>
                           <button
-                            onClick={() => handleDelete(habit.id)}
+                            onClick={() => handleDelete(task.id)}
                             style={{
                               fontSize: 11, padding: '4px 8px', borderRadius: 'var(--r)',
                               border: '1px solid transparent', background: 'transparent',
@@ -681,7 +671,7 @@ export default function HabitsPage() {
                         <StatChip value={totalDone} label="total completions" />
                       </div>
 
-                      <MiniHeatmap habit={habit} today={today} />
+                      <MiniHeatmap task={task} today={today} />
                     </div>
                   </li>
                 );
@@ -719,12 +709,12 @@ function StatChip({
 
 // ─── MiniHeatmap (last 21 days) ───────────────────────────────────────────────
 
-function MiniHeatmap({ habit, today }: { habit: Habit; today: Date }) {
-  const doneSet = new Set(habit.completionLog.map(completionDateStr));
+function MiniHeatmap({ task, today }: { task: Task; today: Date }) {
+  const doneSet = new Set((task.habitCompletionLog ?? []).map(completionDateStr));
   const days: { date: Date; done: boolean; due: boolean }[] = [];
   for (let i = 20; i >= 0; i--) {
     const d = startOfDay(addDays(today, -i));
-    days.push({ date: d, done: doneSet.has(toDateStr(d)), due: isDueToday(habit, d) });
+    days.push({ date: d, done: doneSet.has(toDateStr(d)), due: isDueToday(task, d) });
   }
 
   return (

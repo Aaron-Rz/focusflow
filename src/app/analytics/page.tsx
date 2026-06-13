@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { db } from '@/lib/db/dexie';
-import type { Task, TimerSession, Habit } from '@/types';
+import type { Task, TimerSession } from '@/types';
 import { expectedCompletions, completionDateStr } from '@/lib/habits/schedule';
 import {
   BarChart,
@@ -386,7 +386,7 @@ function HabitHeatmap({
   from,
   to,
 }: {
-  habits: Habit[];
+  habits: Task[];
   from: Date;
   to: Date;
 }) {
@@ -396,7 +396,7 @@ function HabitHeatmap({
   const byDay = useMemo(() => {
     const m = new Map<number, number>();
     for (const h of habits) {
-      for (const d of h.completionLog) {
+      for (const d of h.habitCompletionLog ?? []) {
         const date = new Date(d);
         if (date >= from && date <= to) {
           const ts = startOfDay(date).getTime();
@@ -886,7 +886,7 @@ function TasksTab({
 // ─── habits tab ───────────────────────────────────────────────────────────────
 
 interface HabitStat {
-  habit: Habit;
+  habit: Task;
   streaks: { current: number; best: number; avgLength: number };
   expected: number;
   actual: number;
@@ -901,15 +901,16 @@ function HabitCard({ stat, windowLabel }: { stat: HabitStat; windowLabel: string
   const [expanded, setExpanded] = useState(false);
 
   const DOW_A = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const f = habit.frequency;
-  const freqLabel =
-    f.type === 'daily'
-      ? 'Daily'
-      : f.type === 'interval'
-      ? `Every ${f.every} days`
-      : f.type === 'weekly'
-      ? `Weekly (${f.weekdays.map((d) => DOW_A[d]).join(', ')})`
-      : `Monthly (${f.daysOfMonth.sort((a, b) => a - b).join(', ')})`;
+  const f = habit.habitFrequency;
+  const freqLabel = !f
+    ? ''
+    : f.type === 'daily'
+    ? 'Daily'
+    : f.type === 'interval'
+    ? `Every ${f.every} days`
+    : f.type === 'weekly'
+    ? `Weekly (${f.weekdays.map((d) => DOW_A[d]).join(', ')})`
+    : `Monthly (${f.daysOfMonth.sort((a, b) => a - b).join(', ')})`;
 
   return (
     <div
@@ -1101,7 +1102,7 @@ function HabitsTab({
   to,
   windowLabel,
 }: {
-  habits: Habit[];
+  habits: Task[];
   habitStats: HabitStat[];
   from: Date;
   to: Date;
@@ -1157,8 +1158,8 @@ function HabitsTab({
 export default function AnalyticsPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [sessions, setSessions] = useState<TimerSession[]>([]);
-  const [habits, setHabits] = useState<Habit[]>([]);
   const [loading, setLoading] = useState(true);
+  const habits = tasks.filter((t) => t.isHabit);
 
   const [windowPreset, setWindowPreset] = useState<WindowPreset>('30d');
   const [customFrom, setCustomFrom] = useState('');
@@ -1167,14 +1168,12 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     async function load() {
-      const [t, s, h] = await Promise.all([
+      const [t, s] = await Promise.all([
         db.tasks.toArray(),
         db.timerSessions.toArray(),
-        db.habits.toArray(),
       ]);
       setTasks(t);
       setSessions(s);
-      setHabits(h);
       setLoading(false);
     }
     load();
@@ -1357,7 +1356,7 @@ export default function AnalyticsPage() {
 
     const habitByDay = new Map<number, number>();
     for (const h of habits) {
-      for (const e of h.completionLog) {
+      for (const e of h.habitCompletionLog ?? []) {
         const d = new Date(e);
         if (d >= from && d <= to) {
           const ts = startOfDay(new Date(completionDateStr(e))).getTime();
@@ -1391,7 +1390,8 @@ export default function AnalyticsPage() {
   // ── habit stats ───────────────────────────────────────────────────────────
   const habitStats = useMemo((): HabitStat[] => {
     return habits.map((h) => {
-      const actual = h.completionLog.filter((e) => {
+      const log = h.habitCompletionLog ?? [];
+      const actual = log.filter((e) => {
         const d = new Date(e);
         return d >= from && d <= to;
       }).length;
@@ -1399,13 +1399,13 @@ export default function AnalyticsPage() {
       const rate = expected > 0 ? Math.min(100, Math.round((actual / expected) * 100)) : 0;
       return {
         habit: h,
-        streaks: computeStreaks(h.completionLog),
+        streaks: computeStreaks(log),
         expected,
         actual,
         rate,
-        miss: getMissPattern(h.completionLog, from, to),
-        dow: getDowBreakdown(h.completionLog, from, to),
-        avgTime: avgTimeOfDay(h.completionLog, from, to),
+        miss: getMissPattern(log, from, to),
+        dow: getDowBreakdown(log, from, to),
+        avgTime: avgTimeOfDay(log, from, to),
       };
     });
   }, [habits, from, to]);

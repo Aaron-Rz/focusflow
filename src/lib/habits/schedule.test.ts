@@ -1,15 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import { isDueToday, expectedCompletions } from './schedule';
-import type { Habit, HabitFrequency } from '@/types';
+import type { Task, HabitFrequency } from '@/types';
 
 // ─── test fixture builder ─────────────────────────────────────────────────────
 
-function makeHabit(frequency: HabitFrequency, createdAt = '2024-01-01T00:00:00.000Z'): Habit {
+function makeHabit(frequency: HabitFrequency, createdAt = '2024-01-01T00:00:00.000Z'): Task {
   return {
     id: 'test',
     title: 'Test habit',
-    frequency,
-    completionLog: [],
+    effortMin: 15,
+    importance: 2,
+    cogLoad: 1,
+    status: 'open',
+    isHabit: true,
+    habitFrequency: frequency,
+    habitCompletionLog: [],
     createdAt,
     updatedAt: createdAt,
   };

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { db } from '@/lib/db/dexie';
-import type { Task, Importance, CogLoad } from '@/types';
+import type { Task, Importance, CogLoad, HabitFrequency } from '@/types';
 import { detectCycle } from '@/lib/algorithm/dependencies';
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -15,7 +15,7 @@ export function getTaskDepth(taskId: string, tasks: Task[]): number {
   return 1 + getTaskDepth(task.parentId, tasks);
 }
 
-interface TaskInput {
+export interface TaskInput {
   title: string;
   effortMin: number;
   importance: Importance;
@@ -24,6 +24,9 @@ interface TaskInput {
   category?: string;
   dependsOnId?: string;
   parentId?: string;
+  isHabit?: boolean;
+  habitFrequency?: HabitFrequency;
+  targetTime?: string;
 }
 
 interface TaskStore {
@@ -36,6 +39,10 @@ interface TaskStore {
   updateTask: (id: string, input: TaskInput) => Promise<string | null>;
   markDone: (id: string) => Promise<void>;
   markOpen: (id: string) => Promise<void>;
+  /** For habit-tasks: appends to habitCompletionLog and resets to open. */
+  completeHabit: (id: string) => Promise<void>;
+  /** For habit-tasks: removes today's completion from habitCompletionLog. */
+  uncompleteHabit: (id: string) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
   setDependency: (taskId: string, dependsOnId: string | undefined) => Promise<string | null>;
 }
@@ -77,6 +84,10 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       deadline: input.deadline || undefined, category: input.category || undefined,
       dependsOnId: input.dependsOnId || undefined, parentId: input.parentId || undefined,
       status: 'open', createdAt: now, updatedAt: now,
+      isHabit: input.isHabit || undefined,
+      habitFrequency: input.habitFrequency || undefined,
+      habitCompletionLog: input.isHabit ? [] : undefined,
+      targetTime: input.targetTime || undefined,
     };
     await db.tasks.add(task);
     syncUpsertTask(task);
@@ -111,6 +122,9 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       category: input.category || undefined,
       dependsOnId: input.dependsOnId || undefined,
       parentId: input.parentId || undefined,
+      isHabit: input.isHabit || undefined,
+      habitFrequency: input.habitFrequency || undefined,
+      targetTime: input.targetTime || undefined,
       updatedAt: now,
     });
     const updated = await db.tasks.get(id);
@@ -130,6 +144,31 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   markOpen: async (id) => {
     const now = new Date().toISOString();
     await db.tasks.update(id, { status: 'open', completedAt: undefined, updatedAt: now });
+    const updated = await db.tasks.get(id);
+    if (updated) syncUpsertTask(updated);
+    await get().loadTasks();
+  },
+
+  completeHabit: async (id) => {
+    const task = get().tasks.find((t) => t.id === id);
+    if (!task?.isHabit) return;
+    const now = new Date().toISOString();
+    const log = [...(task.habitCompletionLog ?? []), now];
+    await db.tasks.update(id, { habitCompletionLog: log, status: 'open', updatedAt: now });
+    const updated = await db.tasks.get(id);
+    if (updated) syncUpsertTask(updated);
+    await get().loadTasks();
+  },
+
+  uncompleteHabit: async (id) => {
+    const task = get().tasks.find((t) => t.id === id);
+    if (!task?.isHabit) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const log = (task.habitCompletionLog ?? []).filter(
+      (e) => !e.startsWith(today),
+    );
+    const now = new Date().toISOString();
+    await db.tasks.update(id, { habitCompletionLog: log, updatedAt: now });
     const updated = await db.tasks.get(id);
     if (updated) syncUpsertTask(updated);
     await get().loadTasks();

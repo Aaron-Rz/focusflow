@@ -1,9 +1,9 @@
 /**
- * Pure scheduling helpers for the Habit data model.
+ * Pure scheduling helpers for habit-tasks.
  * No I/O — all inputs are injected so functions remain unit-testable.
  */
 
-import type { Habit } from '@/types';
+import type { Task, HabitFrequency } from '@/types';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -30,22 +30,23 @@ export function completionDateStr(entry: string): string {
 // ─── isDueToday ────────────────────────────────────────────────────────────────
 
 /**
- * Returns true if the habit is scheduled on the day represented by `now`.
+ * Returns true if the habit-task is scheduled on the day represented by `now`.
  *
  * - daily:    always
  * - interval: daysSinceCreation % every === 0  (fixed cadence from createdAt)
  * - weekly:   now.getDay() is in weekdays
  * - monthly:  now.getDate() is in daysOfMonth
  */
-export function isDueToday(habit: Habit, now: Date = new Date()): boolean {
-  const f = habit.frequency;
+export function isDueToday(task: Task, now: Date = new Date()): boolean {
+  const f = task.habitFrequency;
+  if (!f) return false;
   switch (f.type) {
     case 'daily':
       return true;
 
     case 'interval': {
       const daysSince = Math.floor(
-        (now.getTime() - new Date(habit.createdAt).getTime()) / 86_400_000,
+        (now.getTime() - new Date(task.createdAt).getTime()) / 86_400_000,
       );
       return daysSince >= 0 && daysSince % f.every === 0;
     }
@@ -68,8 +69,9 @@ export function isDueToday(habit: Habit, now: Date = new Date()): boolean {
  * - weekly:   count occurrences of each weekday in interval
  * - monthly:  count occurrences of each dayOfMonth in interval
  */
-export function expectedCompletions(habit: Habit, from: Date, to: Date): number {
-  const f = habit.frequency;
+export function expectedCompletions(task: Task | { habitFrequency: HabitFrequency }, from: Date, to: Date): number {
+  const f = 'habitFrequency' in task ? task.habitFrequency : undefined;
+  if (!f) return 0;
 
   // dayCount = number of full days in [from, to] (inclusive)
   const dayCount = Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1;

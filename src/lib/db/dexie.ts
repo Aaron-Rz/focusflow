@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Task, Workblock, TimerSession, Habit, HabitFrequency } from '@/types';
+import type { Task, Workblock, TimerSession, HabitFrequency } from '@/types';
 
 /** Tombstone: records a deletion so it propagates to other devices instead of resurrecting. */
 export interface Deletion {
@@ -12,7 +12,6 @@ class FocusFlowDB extends Dexie {
   tasks!: EntityTable<Task, 'id'>;
   workblocks!: EntityTable<Workblock, 'id'>;
   timerSessions!: EntityTable<TimerSession, 'id'>;
-  habits!: EntityTable<Habit, 'id'>;
   deletions!: EntityTable<Deletion, 'id'>;
 
   constructor() {
@@ -106,6 +105,39 @@ class FocusFlowDB extends Dexie {
             h.frequency = freq;
             delete h.customDays;
           });
+      });
+
+    // v6: Habits are now Tasks with isHabit = true. Migrate habit rows into tasks
+    // and drop the habits table.
+    this.version(6)
+      .stores({
+        tasks: 'id, status, parentId, dependsOnId, category, deadline, updatedAt',
+        workblocks: 'id, start, end, updatedAt',
+        timerSessions: 'id, taskId, startedAt, updatedAt',
+        habits: null, // drop the table
+        deletions: 'id, entity, deletedAt',
+      })
+      .upgrade(async (tx) => {
+        const habits = await tx.table('habits').toArray() as Record<string, unknown>[];
+        for (const h of habits) {
+          const existing = await tx.table('tasks').get(h.id as string);
+          if (existing) continue; // already migrated (shouldn't happen)
+          const now = (h.updatedAt as string) ?? new Date().toISOString();
+          await tx.table('tasks').add({
+            id: h.id,
+            title: h.title,
+            effortMin: 15,
+            importance: 2,
+            cogLoad: 1,
+            status: 'open',
+            createdAt: h.createdAt,
+            updatedAt: now,
+            isHabit: true,
+            habitFrequency: h.frequency,
+            habitCompletionLog: (h.completionLog as string[]) ?? [],
+            targetTime: h.targetTime ?? undefined,
+          });
+        }
       });
   }
 }

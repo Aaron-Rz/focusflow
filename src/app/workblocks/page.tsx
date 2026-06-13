@@ -4,11 +4,10 @@ import { useEffect, useState } from 'react';
 import { useTaskStore } from '@/stores/taskStore';
 import { useWorkblockStore } from '@/stores/workblockStore';
 import { fillWorkblock, workblockToIcs } from '@/lib/scheduling/workblocks';
-import type { Workblock, ScheduleSegment, Task, Habit } from '@/types';
+import type { Workblock, ScheduleSegment, Task } from '@/types';
 import { downloadFile } from '@/lib/utils/download';
 import { getDistinctCategories } from '@/lib/utils/categories';
 import { ThemeToggleButton } from '@/components/ThemeToggleButton';
-import { db } from '@/lib/db/dexie';
 import { isDueToday } from '@/lib/habits/schedule';
 
 /* ─── Helpers ─── */
@@ -50,21 +49,21 @@ function startOfDay(d: Date): Date {
   const r = new Date(d); r.setHours(0, 0, 0, 0); return r;
 }
 
-/** Habits with a targetTime that fall within the workblock window and are due that day */
-function getHabitSlotsForBlock(habits: Habit[], wb: Workblock): { habit: Habit; at: Date }[] {
+/** Habit-tasks with a targetTime that fall within the workblock window and are due that day */
+function getHabitSlotsForBlock(habitTasks: Task[], wb: Workblock): { task: Task; at: Date }[] {
   const wbStart = new Date(wb.start);
   const wbEnd = new Date(wb.end);
   const wbDay = startOfDay(wbStart);
-  const slots: { habit: Habit; at: Date }[] = [];
+  const slots: { task: Task; at: Date }[] = [];
 
-  for (const h of habits) {
-    if (!h.targetTime) continue;
-    if (!isDueToday(h, wbDay)) continue;
-    const [hh, mm] = h.targetTime.split(':').map(Number);
+  for (const t of habitTasks) {
+    if (!t.targetTime) continue;
+    if (!isDueToday(t, wbDay)) continue;
+    const [hh, mm] = t.targetTime.split(':').map(Number);
     const at = new Date(wbDay);
     at.setHours(hh, mm, 0, 0);
     if (at >= wbStart && at < wbEnd) {
-      slots.push({ habit: h, at });
+      slots.push({ task: t, at });
     }
   }
   return slots.sort((a, b) => a.at.getTime() - b.at.getTime());
@@ -72,7 +71,7 @@ function getHabitSlotsForBlock(habits: Habit[], wb: Workblock): { habit: Habit; 
 
 /* ─── HabitSlots component ─── */
 
-function HabitSlots({ slots }: { slots: { habit: Habit; at: Date }[] }) {
+function HabitSlots({ slots }: { slots: { task: Task; at: Date }[] }) {
   if (!slots.length) return null;
   return (
     <div style={{ marginBottom: 8 }}>
@@ -89,7 +88,7 @@ function HabitSlots({ slots }: { slots: { habit: Habit; at: Date }[] }) {
         Fixed habit slots
       </div>
       <ol style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {slots.map(({ habit, at }, i) => (
+        {slots.map(({ task, at }, i) => (
           <li
             key={i}
             style={{
@@ -109,7 +108,7 @@ function HabitSlots({ slots }: { slots: { habit: Habit; at: Date }[] }) {
               {fmtTime(at)} (fixed)
             </span>
             <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              ○ {habit.title}
+              ○ {task.title}
             </span>
           </li>
         ))}
@@ -201,7 +200,6 @@ export default function WorkblocksPage() {
   const { tasks, loading: tasksLoading, loadTasks } = useTaskStore();
   const { workblocks, loading: wbLoading, loadWorkblocks, addWorkblock, deleteWorkblock } =
     useWorkblockStore();
-  const [habits, setHabits] = useState<Habit[]>([]);
 
   const now = new Date();
   const roundedNow   = new Date(Math.ceil(now.getTime() / 60_000) * 60_000);
@@ -215,13 +213,13 @@ export default function WorkblocksPage() {
   const [pomodoroWorkMin, setPomodoroWorkMin] = useState(25);
   const [pomodoroBreakMin, setPomodoroBreakMin] = useState(5);
   const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
+  const [includeHabits, setIncludeHabits]   = useState(false);
   const [formError, setFormError]       = useState('');
   const [submitting, setSubmitting]     = useState(false);
 
   useEffect(() => {
     loadTasks();
     loadWorkblocks();
-    db.habits.toArray().then(setHabits);
   }, [loadTasks, loadWorkblocks]);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -247,6 +245,7 @@ export default function WorkblocksPage() {
       end: endDate.toISOString(),
       onOverrun,
       categoryFilter: categoryFilter.length > 0 ? categoryFilter : undefined,
+      includeHabits: includeHabits || undefined,
       pomodoroEnabled,
       pomodoroWorkMin: pomodoroEnabled ? pomodoroWorkMin : undefined,
       pomodoroBreakMin: pomodoroEnabled ? pomodoroBreakMin : undefined,
@@ -411,6 +410,18 @@ export default function WorkblocksPage() {
                 )}
               </div>
             )}
+
+            {/* Include habits toggle */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+              <input
+                type="checkbox"
+                checked={includeHabits}
+                onChange={(e) => setIncludeHabits(e.target.checked)}
+                style={{ width: 16, height: 16 }}
+              />
+              <span style={{ fontSize: 13, color: 'var(--t1)', fontWeight: 500 }}>Include habits</span>
+              <span style={{ fontSize: 11, color: 'var(--t3)' }}>(habit-tasks due today)</span>
+            </label>
 
             {/* Pomodoro */}
             <div
@@ -625,7 +636,7 @@ export default function WorkblocksPage() {
 
                     {/* Habit fixed slots + task segments */}
                     <div style={{ marginTop: 10 }}>
-                      <HabitSlots slots={getHabitSlotsForBlock(habits, wb)} />
+                      <HabitSlots slots={getHabitSlotsForBlock(tasks.filter((t) => t.isHabit), wb)} />
                       <SegmentList segments={filled.segments} taskMap={taskMap} />
                     </div>
                   </div>
