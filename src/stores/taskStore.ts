@@ -15,21 +15,25 @@ export function getTaskDepth(taskId: string, tasks: Task[]): number {
   return 1 + getTaskDepth(task.parentId, tasks);
 }
 
+interface TaskInput {
+  title: string;
+  effortMin: number;
+  importance: Importance;
+  cogLoad: CogLoad;
+  deadline?: string;
+  category?: string;
+  dependsOnId?: string;
+  parentId?: string;
+}
+
 interface TaskStore {
   tasks: Task[];
   loading: boolean;
   loadTasks: () => Promise<void>;
   /** Returns an error string on failure, null on success. */
-  addTask: (input: {
-    title: string;
-    effortMin: number;
-    importance: Importance;
-    cogLoad: CogLoad;
-    deadline?: string;
-    category?: string;
-    dependsOnId?: string;
-    parentId?: string;
-  }) => Promise<string | null>;
+  addTask: (input: TaskInput) => Promise<string | null>;
+  /** Returns an error string on failure, null on success. */
+  updateTask: (id: string, input: TaskInput) => Promise<string | null>;
   markDone: (id: string) => Promise<void>;
   markOpen: (id: string) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
@@ -76,6 +80,41 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     };
     await db.tasks.add(task);
     syncUpsertTask(task);
+    await get().loadTasks();
+    return null;
+  },
+
+  updateTask: async (id, input) => {
+    const current = get().tasks;
+    if (input.parentId) {
+      const parentDepth = getTaskDepth(input.parentId, current);
+      if (parentDepth >= 2) {
+        return 'Cannot nest here — maximum depth is 2 (grandchild level).';
+      }
+    }
+    if (input.dependsOnId) {
+      if (input.dependsOnId === id) return 'A task cannot depend on itself.';
+      const candidate = current.map((t) =>
+        t.id === id ? { ...t, dependsOnId: input.dependsOnId, parentId: input.parentId } : t
+      );
+      if (detectCycle(candidate)) {
+        return 'That dependency would create a cycle.';
+      }
+    }
+    const now = new Date().toISOString();
+    await db.tasks.update(id, {
+      title: input.title,
+      effortMin: input.effortMin,
+      importance: input.importance,
+      cogLoad: input.cogLoad,
+      deadline: input.deadline || undefined,
+      category: input.category || undefined,
+      dependsOnId: input.dependsOnId || undefined,
+      parentId: input.parentId || undefined,
+      updatedAt: now,
+    });
+    const updated = await db.tasks.get(id);
+    if (updated) syncUpsertTask(updated);
     await get().loadTasks();
     return null;
   },

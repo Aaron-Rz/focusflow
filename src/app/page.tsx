@@ -49,30 +49,43 @@ function Label({ children, style }: { children: React.ReactNode; style?: React.C
 
 /* ─── AddTaskForm ─── */
 
+interface TaskFormInput {
+  title: string; effortMin: number; importance: Importance; cogLoad: CogLoad;
+  deadline?: string; category?: string; dependsOnId?: string; parentId?: string;
+}
+
 interface AddTaskFormProps {
   parentId?: string;
   tasks: Task[];
-  onAdd: (input: {
-    title: string; effortMin: number; importance: Importance; cogLoad: CogLoad;
-    deadline?: string; category?: string; dependsOnId?: string; parentId?: string;
-  }) => Promise<string | null>;
+  onAdd?: (input: TaskFormInput) => Promise<string | null>;
+  onEdit?: (input: TaskFormInput) => Promise<string | null>;
+  /** When provided, form operates in edit mode pre-filled with these values. */
+  initialValues?: TaskFormInput;
   onCancel?: () => void;
   compact?: boolean;
 }
 
-function AddTaskForm({ parentId, tasks, onAdd, onCancel, compact = false }: AddTaskFormProps) {
-  const [title, setTitle]         = useState('');
-  const [effortMin, setEffortMin] = useState(30);
-  const [importance, setImportance] = useState<Importance>(2);
-  const [cogLoad, setCogLoad]     = useState<CogLoad>(2);
-  const [deadline, setDeadline]   = useState('');
-  const [category, setCategory]   = useState('');
-  const [dependsOnId, setDependsOnId] = useState('');
+function AddTaskForm({ parentId, tasks, onAdd, onEdit, initialValues, onCancel, compact = false }: AddTaskFormProps) {
+  const [title, setTitle]         = useState(initialValues?.title ?? '');
+  const [effortMin, setEffortMin] = useState(initialValues?.effortMin ?? 30);
+  const [importance, setImportance] = useState<Importance>(initialValues?.importance ?? 2);
+  const [cogLoad, setCogLoad]     = useState<CogLoad>(initialValues?.cogLoad ?? 2);
+  const [deadline, setDeadline]   = useState(
+    initialValues?.deadline
+      ? initialValues.deadline.slice(0, 16) // trim to datetime-local format
+      : ''
+  );
+  const [category, setCategory]   = useState(initialValues?.category ?? '');
+  const [dependsOnId, setDependsOnId] = useState(initialValues?.dependsOnId ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]         = useState('');
 
-  const siblingOptions = parentId
-    ? tasks.filter((t) => t.parentId === parentId)
+  const isEditMode = !!onEdit;
+
+  const effectiveParentId = initialValues?.parentId ?? parentId;
+
+  const siblingOptions = effectiveParentId
+    ? tasks.filter((t) => t.parentId === effectiveParentId)
     : tasks.filter((t) => !t.parentId);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -80,17 +93,21 @@ function AddTaskForm({ parentId, tasks, onAdd, onCancel, compact = false }: AddT
     if (!title.trim()) return;
     setError('');
     setSubmitting(true);
-    const err = await onAdd({
+    const input: TaskFormInput = {
       title: title.trim(), effortMin, importance, cogLoad,
       deadline: deadline || undefined,
       category: category.trim() || undefined,
       dependsOnId: dependsOnId || undefined,
-      parentId,
-    });
+      parentId: effectiveParentId,
+    };
+    const handler = isEditMode ? onEdit! : onAdd!;
+    const err = await handler(input);
     setSubmitting(false);
     if (err) { setError(err); return; }
-    setTitle(''); setEffortMin(30); setImportance(2); setCogLoad(2);
-    setDeadline(''); setCategory(''); setDependsOnId('');
+    if (!isEditMode) {
+      setTitle(''); setEffortMin(30); setImportance(2); setCogLoad(2);
+      setDeadline(''); setCategory(''); setDependsOnId('');
+    }
     if (onCancel) onCancel();
   };
 
@@ -146,7 +163,7 @@ function AddTaskForm({ parentId, tasks, onAdd, onCancel, compact = false }: AddT
               minHeight: 30,
             }}
           >
-            {submitting ? 'Adding…' : 'Add'}
+            {submitting ? (isEditMode ? 'Saving…' : 'Adding…') : (isEditMode ? 'Save' : 'Add')}
           </button>
           {onCancel && (
             <button
@@ -262,7 +279,7 @@ function AddTaskForm({ parentId, tasks, onAdd, onCancel, compact = false }: AddT
             letterSpacing: '0.03em',
           }}
         >
-          {submitting ? 'Adding…' : 'Add Task'}
+          {submitting ? (isEditMode ? 'Saving…' : 'Adding…') : (isEditMode ? 'Save Changes' : 'Add Task')}
         </button>
         {onCancel && (
           <button
@@ -301,15 +318,17 @@ interface TaskRowProps {
   onOpen: (id: string) => void;
   onSetDep: (taskId: string, val: string) => Promise<void>;
   onAddTask: AddTaskFormProps['onAdd'];
+  onEditTask: (id: string, input: TaskFormInput) => Promise<string | null>;
   isBlocked: boolean;
   blockedBy?: string;
 }
 
 function TaskRow({
   task, score, isAtRisk, isOverdue, depth, tasks, scoredById,
-  onDone, onOpen, onSetDep, onAddTask, isBlocked, blockedBy,
+  onDone, onOpen, onSetDep, onAddTask, onEditTask, isBlocked, blockedBy,
 }: TaskRowProps) {
   const [showSubtaskForm, setShowSubtaskForm] = useState(false);
+  const [showEditForm, setShowEditForm] = useState(false);
   const [depError, setDepError] = useState('');
 
   const children = tasks
@@ -358,7 +377,7 @@ function TaskRow({
           marginLeft: depth > 0 ? 16 : 0,
         }}
       >
-        {/* Row 1: checkbox + title + score badge */}
+        {/* Row 1: checkbox + title + score badge + edit button */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
           <input
             type="checkbox"
@@ -396,7 +415,45 @@ function TaskRow({
           >
             {score.toFixed(2)}
           </span>
+          <button
+            onClick={() => { setShowEditForm((v) => !v); setShowSubtaskForm(false); }}
+            title={showEditForm ? 'Cancel edit' : 'Edit task'}
+            style={{
+              flexShrink: 0,
+              fontSize: 12,
+              background: showEditForm ? 'var(--bg-3)' : 'none',
+              border: showEditForm ? '1px solid var(--border-2)' : 'none',
+              borderRadius: 'var(--r)',
+              color: 'var(--t3)',
+              cursor: 'pointer',
+              padding: '1px 5px',
+              lineHeight: 1.6,
+            }}
+          >
+            {showEditForm ? '×' : '✎'}
+          </button>
         </div>
+
+        {/* Edit form (inline) */}
+        {showEditForm && (
+          <div style={{ marginTop: 10, marginLeft: 24 }}>
+            <AddTaskForm
+              tasks={tasks}
+              initialValues={{
+                title: task.title,
+                effortMin: task.effortMin,
+                importance: task.importance,
+                cogLoad: task.cogLoad,
+                deadline: task.deadline,
+                category: task.category,
+                dependsOnId: task.dependsOnId,
+                parentId: task.parentId,
+              }}
+              onEdit={(input) => onEditTask(task.id, input)}
+              onCancel={() => setShowEditForm(false)}
+            />
+          </div>
+        )}
 
         {/* Row 2: metadata + status badges */}
         <div
@@ -520,6 +577,7 @@ function TaskRow({
                 onOpen={onOpen}
                 onSetDep={onSetDep}
                 onAddTask={onAddTask}
+                onEditTask={onEditTask}
                 isBlocked={childBlocked}
                 blockedBy={blockerTask?.title}
               />
@@ -540,7 +598,7 @@ function isChildBlocked(task: Task, allTasks: Task[]): boolean {
 /* ─── Home ─── */
 
 export default function Home() {
-  const { tasks, loading, loadTasks, addTask, markDone, markOpen, setDependency } = useTaskStore();
+  const { tasks, loading, loadTasks, addTask, updateTask, markDone, markOpen, setDependency } = useTaskStore();
   const { activeCategories, toggleCategory, clearFilter } = useFilterStore();
   const [depError, setDepError]         = useState('');
   const [showAddForm, setShowAddForm]   = useState(false);
@@ -790,6 +848,7 @@ export default function Home() {
                 onOpen={markOpen}
                 onSetDep={handleSetDependency}
                 onAddTask={addTask}
+                onEditTask={updateTask}
                 isBlocked={blocked}
                 blockedBy={blockerTask?.title}
               />
